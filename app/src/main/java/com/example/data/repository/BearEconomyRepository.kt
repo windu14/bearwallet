@@ -24,6 +24,9 @@ class BearEconomyRepository(
   private val _profiles = MutableStateFlow<Map<String, UserProfile>>(emptyMap())
   val profiles: StateFlow<Map<String, UserProfile>> = _profiles.asStateFlow()
 
+  // Registered credentials for strict verification
+  private val _userCredentials = mutableMapOf<String, String>()
+
   // Wallets mapped by userId
   private val _wallets = MutableStateFlow<Map<String, WalletAccount>>(emptyMap())
   val wallets: StateFlow<Map<String, WalletAccount>> = _wallets.asStateFlow()
@@ -217,91 +220,101 @@ class BearEconomyRepository(
       userCentralBank.id to userCentralBank
     )
 
-    // Grant initial welcome signup distribution (500 B each from finite distribution pool)
-    distributeInitialUserGrant(defaultUser)
-    distributeInitialUserGrant(userMaya)
-    distributeInitialUserGrant(userAlex)
+    // Register passwords for community accounts
+    _userCredentials[defaultUser.id] = "bearpassword123"
+    _userCredentials[userMaya.id] = "bearpassword123"
+    _userCredentials[userAlex.id] = "bearpassword123"
+    _userCredentials[userCentralBank.id] = "bearpassword123"
 
-    // Set active user
-    _currentUser.value = defaultUser
-  }
+    // Initial wallets for community members with 0 B balance (user requests 0 balance)
+    _wallets.value = mapOf(
+      defaultUser.id to WalletAccount(userId = defaultUser.id, balance = 0L),
+      userMaya.id to WalletAccount(userId = userMaya.id, balance = 0L),
+      userAlex.id to WalletAccount(userId = userAlex.id, balance = 0L),
+      userCentralBank.id to WalletAccount(userId = userCentralBank.id, balance = 0L)
+    )
 
-  private fun distributeInitialUserGrant(user: UserProfile) {
-    val pool = _systemAccounts.value[SupabaseConfig.ACC_USER_DISTRIBUTION] ?: return
-    val bonus = SupabaseConfig.INITIAL_USER_SIGNUP_BONUS
-    if (pool.balance >= bonus) {
-      val updatedPool = pool.copy(balance = pool.balance - bonus)
-      _systemAccounts.value = _systemAccounts.value + (SupabaseConfig.ACC_USER_DISTRIBUTION to updatedPool)
-
-      val userWallet = WalletAccount(
-        userId = user.id,
-        balance = bonus
-      )
-      _wallets.value = _wallets.value + (user.id to userWallet)
-
-      val tx = LedgerTransaction(
-        idempotencyKey = "signup_${user.id}",
-        transactionType = TransactionType.SIGNUP_BONUS.name,
-        amount = bonus,
-        fee = 0L,
-        sourceAccount = SupabaseConfig.ACC_USER_DISTRIBUTION,
-        destinationAccount = user.id,
-        note = "Welcome distribution grant from finite community pool",
-        status = "COMPLETED"
-      )
-      _transactions.value = listOf(tx) + _transactions.value
-
-      addNotification(
-        userId = user.id,
-        title = "Welcome to BearWallet!",
-        message = "Your wallet has received an initial grant of $bonus B from the finite distribution pool.",
-        type = "SYSTEM"
-      )
-    }
+    // User is NOT logged in on app startup: must explicitly Sign In or Sign Up
+    _currentUser.value = null
   }
 
   // --- Authentication Flows ---
 
   suspend fun signUp(email: String, pass: String, username: String, fullName: String): Result<UserProfile> = mutex.withLock {
     try {
-      // Clean username
+      val cleanEmail = email.trim().lowercase()
       val cleanHandle = username.trim().trimStart('@').lowercase()
-      if (cleanHandle.isEmpty()) return Result.failure(IllegalArgumentException("Username cannot be empty"))
+      val cleanName = fullName.trim()
 
-      // Check handle uniqueness
-      if (_profiles.value.values.any { it.username.equals(cleanHandle, ignoreCase = true) }) {
-        return Result.failure(IllegalArgumentException("Username @$cleanHandle is already taken"))
+      val emailRegex = Regex("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$")
+      if (!emailRegex.matches(cleanEmail)) {
+        return Result.failure(IllegalArgumentException("Format email tidak valid (contoh: user@email.com)"))
+      }
+      if (pass.length < 6) {
+        return Result.failure(IllegalArgumentException("Password minimal harus 6 karakter"))
+      }
+      if (cleanHandle.length < 3 || !cleanHandle.matches(Regex("^[a-zA-Z0-9_]+$"))) {
+        return Result.failure(IllegalArgumentException("Username minimal 3 karakter dan hanya boleh huruf, angka, atau underscore"))
+      }
+      if (cleanName.isEmpty()) {
+        return Result.failure(IllegalArgumentException("Nama lengkap tidak boleh kosong"))
       }
 
-      // Try remote Supabase auth
-      val remoteResult = networkClient.signUp(email, pass, cleanHandle, fullName)
+      // Check handle or email uniqueness locally
+      if (_profiles.value.values.any { it.username.equals(cleanHandle, ignoreCase = true) || it.email.equals(cleanEmail, ignoreCase = true) }) {
+        return Result.failure(IllegalArgumentException("Username @$cleanHandle atau email tersebut sudah terdaftar"))
+      }
+
+      // Call remote Supabase Auth (/auth/v1/signup)
+      val remoteResult = networkClient.signUp(cleanEmail, pass, cleanHandle, cleanName)
       val newId = if (remoteResult.isSuccess) {
         _isSupabaseConnected.value = true
         networkClient.currentUserId ?: UUID.randomUUID().toString()
       } else {
+        val remoteError = remoteResult.exceptionOrNull()?.message ?: ""
+        val isExplicitDuplicate = remoteError.contains("already registered", ignoreCase = true) ||
+          remoteError.contains("already exists", ignoreCase = true)
+        if (isExplicitDuplicate) {
+          return Result.failure(IllegalArgumentException(remoteError))
+        }
         _isSupabaseConnected.value = false
         UUID.randomUUID().toString()
       }
 
       val newUser = UserProfile(
         id = newId,
-        email = email,
+        email = cleanEmail,
         username = cleanHandle,
-        fullName = fullName,
+        fullName = cleanName,
         role = if (cleanHandle == "admin" || cleanHandle == "centralbank") "admin" else "user",
         creditScore = 600
       )
 
+      _userCredentials[newUser.id] = pass
       _profiles.value = _profiles.value + (newUser.id to newUser)
-      distributeInitialUserGrant(newUser)
+
+      // Initial wallet strictly with 0 B balance
+      val userWallet = WalletAccount(
+        userId = newUser.id,
+        balance = 0L
+      )
+      _wallets.value = _wallets.value + (newUser.id to userWallet)
+
       _currentUser.value = newUser
+
+      addNotification(
+        userId = newUser.id,
+        title = "Akun Berhasil Dibuat",
+        message = "Selamat datang @${newUser.username}! Saldo awal Anda adalah 0 B. Gunakan faucet atau terima transfer untuk memulai.",
+        type = "SYSTEM"
+      )
 
       addAuditLog(
         actor = newUser.email,
         action = "USER_REGISTERED",
         target = newUser.username,
         before = "None",
-        after = "Created with 500 B initial grant"
+        after = "Registered with 0 B balance"
       )
 
       Result.success(newUser)
@@ -314,35 +327,69 @@ class BearEconomyRepository(
     try {
       val target = emailOrHandle.trim().trimStart('@').lowercase()
 
-      // Look up locally or via Supabase
-      val profile = _profiles.value.values.find {
+      if (target.isBlank()) {
+        return Result.failure(IllegalArgumentException("Email atau username tidak boleh kosong"))
+      }
+      if (pass.isBlank()) {
+        return Result.failure(IllegalArgumentException("Password tidak boleh kosong"))
+      }
+
+      val emailForAuth = if (target.contains("@")) target else {
+        _profiles.value.values.find { it.username.equals(target, ignoreCase = true) }?.email ?: "$target@bearwallet.app"
+      }
+
+      // 1. Authenticate with Supabase Auth backend
+      val remoteResult = networkClient.signIn(emailForAuth, pass)
+      if (remoteResult.isSuccess) {
+        _isSupabaseConnected.value = true
+        val userId = networkClient.currentUserId ?: ""
+        var profile = _profiles.value[userId] ?: _profiles.value.values.find {
+          it.email.equals(emailForAuth, ignoreCase = true) || it.username.equals(target, ignoreCase = true)
+        }
+        if (profile == null) {
+          profile = UserProfile(
+            id = userId.ifEmpty { UUID.randomUUID().toString() },
+            email = emailForAuth,
+            username = target,
+            fullName = target.replaceFirstChar { it.uppercase() },
+            role = "user",
+            creditScore = 600
+          )
+          _profiles.value = _profiles.value + (profile.id to profile)
+          if (!_wallets.value.containsKey(profile.id)) {
+            _wallets.value = _wallets.value + (profile.id to WalletAccount(userId = profile.id, balance = 0L))
+          }
+        }
+        _currentUser.value = profile
+        return@withLock Result.success(profile)
+      }
+
+      // 2. Strict verification against registered local credentials
+      val localProfile = _profiles.value.values.find {
         it.email.equals(target, ignoreCase = true) || it.username.equals(target, ignoreCase = true)
       }
 
-      // Also attempt remote sign in
-      val remoteResult = networkClient.signIn(if (target.contains("@")) target else "$target@bearwallet.app", pass)
-      if (remoteResult.isSuccess) {
-        _isSupabaseConnected.value = true
+      if (localProfile != null) {
+        val storedPass = _userCredentials[localProfile.id]
+        if (storedPass != null && storedPass == pass) {
+          _currentUser.value = localProfile
+          return@withLock Result.success(localProfile)
+        } else {
+          return@withLock Result.failure(IllegalArgumentException("Password yang Anda masukkan salah"))
+        }
       }
 
-      if (profile != null) {
-        _currentUser.value = profile
-        Result.success(profile)
+      // 3. User not found -> strict rejection (no dummy account creation!)
+      val remoteError = remoteResult.exceptionOrNull()?.message ?: ""
+      val isNetworkIssue = remoteError.contains("Failed to connect") || remoteError.contains("Unable to resolve host")
+
+      val errorMessage = if (remoteError.isNotBlank() && !isNetworkIssue) {
+        remoteError
       } else {
-        // If profile was created on remote Supabase but not yet cached locally
-        val newProfile = UserProfile(
-          id = networkClient.currentUserId ?: UUID.randomUUID().toString(),
-          email = if (target.contains("@")) target else "$target@bearwallet.app",
-          username = target,
-          fullName = target.replaceFirstChar { it.uppercase() },
-          role = "user",
-          creditScore = 600
-        )
-        _profiles.value = _profiles.value + (newProfile.id to newProfile)
-        distributeInitialUserGrant(newProfile)
-        _currentUser.value = newProfile
-        Result.success(newProfile)
+        "Akun '$target' tidak ditemukan atau password salah. Silakan periksa kembali atau daftar akun baru."
       }
+
+      Result.failure(IllegalArgumentException(errorMessage))
     } catch (e: Exception) {
       Result.failure(e)
     }

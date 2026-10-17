@@ -34,9 +34,10 @@ fun SignInScreen(
   onSignInSuccess: () -> Unit,
   modifier: Modifier = Modifier
 ) {
-  var emailOrHandle by remember { mutableStateOf("bearboss") }
-  var password by remember { mutableStateOf("bearpassword123") }
+  var emailOrHandle by remember { mutableStateOf("") }
+  var password by remember { mutableStateOf("") }
   var isPasswordVisible by remember { mutableStateOf(false) }
+  var clientError by remember { mutableStateOf<String?>(null) }
 
   val isLoading by viewModel.isOperationLoading.collectAsState()
 
@@ -86,16 +87,20 @@ fun SignInScreen(
           color = TextSecondary
         )
 
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(16.dp))
         SimulatorDisclaimerBanner()
 
-        Spacer(modifier = Modifier.height(28.dp))
+        Spacer(modifier = Modifier.height(24.dp))
 
         // Input Fields
         OutlinedTextField(
           value = emailOrHandle,
-          onValueChange = { emailOrHandle = it },
-          label = { Text("Email or @Username") },
+          onValueChange = {
+            emailOrHandle = it
+            clientError = null
+          },
+          label = { Text("Email atau @Username") },
+          placeholder = { Text("user@email.com atau @handle") },
           leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, tint = ForestGreenPrimary) },
           singleLine = true,
           modifier = Modifier
@@ -108,8 +113,12 @@ fun SignInScreen(
 
         OutlinedTextField(
           value = password,
-          onValueChange = { password = it },
+          onValueChange = {
+            password = it
+            clientError = null
+          },
           label = { Text("Password") },
+          placeholder = { Text("Minimal 6 karakter") },
           leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = ForestGreenPrimary) },
           trailingIcon = {
             IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
@@ -127,12 +136,29 @@ fun SignInScreen(
           shape = RoundedCornerShape(14.dp)
         )
 
+        if (clientError != null) {
+          Spacer(modifier = Modifier.height(8.dp))
+          Surface(
+            color = NegativeRedBg,
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier.fillMaxWidth()
+          ) {
+            Text(
+              text = clientError ?: "",
+              color = NegativeRed,
+              style = MaterialTheme.typography.bodySmall,
+              fontWeight = FontWeight.SemiBold,
+              modifier = Modifier.padding(10.dp)
+            )
+          }
+        }
+
         Row(
           modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.End
         ) {
           TextButton(onClick = onNavigateToForgotPassword) {
-            Text("Forgot Password?", color = MintSecondary, fontWeight = FontWeight.SemiBold)
+            Text("Lupa Password?", color = MintSecondary, fontWeight = FontWeight.SemiBold)
           }
         }
 
@@ -140,9 +166,18 @@ fun SignInScreen(
 
         Button(
           onClick = {
+            if (emailOrHandle.isBlank()) {
+              clientError = "Silakan masukkan email atau username Anda"
+              return@Button
+            }
+            if (password.isBlank()) {
+              clientError = "Silakan masukkan password Anda"
+              return@Button
+            }
+            clientError = null
             viewModel.signIn(emailOrHandle, password, onSignInSuccess)
           },
-          enabled = !isLoading && emailOrHandle.isNotBlank(),
+          enabled = !isLoading,
           modifier = Modifier
             .fillMaxWidth()
             .height(54.dp)
@@ -153,18 +188,33 @@ fun SignInScreen(
           if (isLoading) {
             CircularProgressIndicator(color = PureWhite, modifier = Modifier.size(24.dp))
           } else {
-            Text("Sign In", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("Masuk ke Akun", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
           }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+        Surface(
+          color = SageSurface,
+          shape = RoundedCornerShape(10.dp),
+          modifier = Modifier.fillMaxWidth()
+        ) {
+          Text(
+            text = "Kredensial Akun Komunitas:\n• @maya (Pass: bearpassword123)\n• @alex (Pass: bearpassword123)\n• @centralbank (Pass: bearpassword123)\nAtau daftarkan akun baru Anda sendiri di bawah.",
+            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+            color = TextSecondary,
+            modifier = Modifier.padding(10.dp),
+            lineHeight = 16.sp
+          )
         }
       }
 
       Row(
-        modifier = Modifier.padding(bottom = 16.dp),
+        modifier = Modifier.padding(bottom = 16.dp, top = 20.dp),
         verticalAlignment = Alignment.CenterVertically
       ) {
-        Text("Don't have an account?", color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
+        Text("Belum punya akun?", color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
         TextButton(onClick = onNavigateToSignUp) {
-          Text("Sign Up", color = ForestGreenPrimary, fontWeight = FontWeight.Bold)
+          Text("Daftar Sekarang", color = ForestGreenPrimary, fontWeight = FontWeight.Bold)
         }
       }
     }
@@ -183,7 +233,15 @@ fun SignUpScreen(
   var email by remember { mutableStateOf("") }
   var password by remember { mutableStateOf("") }
 
+  var usernameError by remember { mutableStateOf<String?>(null) }
+  var emailError by remember { mutableStateOf<String?>(null) }
+  var passwordError by remember { mutableStateOf<String?>(null) }
+  var nameError by remember { mutableStateOf<String?>(null) }
+
   val isLoading by viewModel.isOperationLoading.collectAsState()
+
+  val emailRegex = Regex("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$")
+  val usernameRegex = Regex("^[a-zA-Z0-9_]+$")
 
   Scaffold(
     containerColor = WarmWhite,
@@ -202,26 +260,37 @@ fun SignUpScreen(
         Spacer(modifier = Modifier.height(16.dp))
 
         Text(
-          text = "Create Bear Account",
+          text = "Daftar Akun Baru",
           style = MaterialTheme.typography.headlineMedium,
           fontWeight = FontWeight.Bold,
           color = ForestGreenPrimary
         )
         Text(
-          text = "Includes 500 B welcome grant from distribution pool",
+          text = "Saldo Awal 0 B • Terhubung Langsung ke Supabase Auth",
           style = MaterialTheme.typography.bodyMedium,
           color = MintSecondary,
           fontWeight = FontWeight.SemiBold
         )
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(20.dp))
 
+        // Username Input
         OutlinedTextField(
           value = username,
-          onValueChange = { username = it },
+          onValueChange = {
+            username = it
+            usernameError = when {
+              it.isBlank() -> "Username tidak boleh kosong"
+              it.trim().trimStart('@').length < 3 -> "Username minimal 3 karakter"
+              !it.trim().trimStart('@').matches(usernameRegex) -> "Hanya boleh huruf, angka, dan underscore"
+              else -> null
+            }
+          },
           label = { Text("Transfer Handle (@username)") },
-          placeholder = { Text("e.g. maya, alex, bearuser") },
+          placeholder = { Text("contoh: windu, maya, alex") },
           leadingIcon = { Icon(Icons.Default.AlternateEmail, contentDescription = null, tint = ForestGreenPrimary) },
+          isError = usernameError != null,
+          supportingText = { usernameError?.let { Text(it, color = NegativeRed) } },
           singleLine = true,
           modifier = Modifier
             .fillMaxWidth()
@@ -229,52 +298,104 @@ fun SignUpScreen(
           shape = RoundedCornerShape(14.dp)
         )
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
+        // Full Name Input
         OutlinedTextField(
           value = fullName,
-          onValueChange = { fullName = it },
-          label = { Text("Full Name") },
-          placeholder = { Text("e.g. Maya Hartono") },
+          onValueChange = {
+            fullName = it
+            nameError = if (it.isBlank()) "Nama lengkap tidak boleh kosong" else null
+          },
+          label = { Text("Nama Lengkap") },
+          placeholder = { Text("contoh: Windu Mariposa") },
           leadingIcon = { Icon(Icons.Default.Badge, contentDescription = null, tint = ForestGreenPrimary) },
+          isError = nameError != null,
+          supportingText = { nameError?.let { Text(it, color = NegativeRed) } },
           singleLine = true,
           modifier = Modifier.fillMaxWidth(),
           shape = RoundedCornerShape(14.dp)
         )
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
+        // Email Input
         OutlinedTextField(
           value = email,
-          onValueChange = { email = it },
-          label = { Text("Email Address") },
+          onValueChange = {
+            email = it
+            emailError = when {
+              it.isBlank() -> "Email tidak boleh kosong"
+              !it.trim().matches(emailRegex) -> "Format email tidak valid (harus mengandung @ dan domain)"
+              else -> null
+            }
+          },
+          label = { Text("Alamat Email") },
+          placeholder = { Text("user@email.com") },
           keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
           leadingIcon = { Icon(Icons.Default.Email, contentDescription = null, tint = ForestGreenPrimary) },
+          isError = emailError != null,
+          supportingText = { emailError?.let { Text(it, color = NegativeRed) } },
           singleLine = true,
           modifier = Modifier.fillMaxWidth(),
           shape = RoundedCornerShape(14.dp)
         )
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
+        // Password Input
         OutlinedTextField(
           value = password,
-          onValueChange = { password = it },
-          label = { Text("Password") },
+          onValueChange = {
+            password = it
+            passwordError = when {
+              it.isBlank() -> "Password tidak boleh kosong"
+              it.length < 6 -> "Password minimal 6 karakter"
+              else -> null
+            }
+          },
+          label = { Text("Password (Minimal 6 Karakter)") },
+          placeholder = { Text("Minimal 6 karakter") },
           visualTransformation = PasswordVisualTransformation(),
           leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = ForestGreenPrimary) },
+          isError = passwordError != null,
+          supportingText = { passwordError?.let { Text(it, color = NegativeRed) } },
           singleLine = true,
           modifier = Modifier.fillMaxWidth(),
           shape = RoundedCornerShape(14.dp)
         )
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
         Button(
           onClick = {
-            viewModel.signUp(email, password, username, fullName, onSignUpSuccess)
+            val cleanEmail = email.trim()
+            val cleanHandle = username.trim().trimStart('@')
+            val cleanName = fullName.trim()
+
+            var hasError = false
+            if (cleanHandle.length < 3 || !cleanHandle.matches(usernameRegex)) {
+              usernameError = "Username minimal 3 karakter, alfanumerik"
+              hasError = true
+            }
+            if (cleanName.isBlank()) {
+              nameError = "Nama lengkap wajib diisi"
+              hasError = true
+            }
+            if (!cleanEmail.matches(emailRegex)) {
+              emailError = "Format email tidak valid"
+              hasError = true
+            }
+            if (password.length < 6) {
+              passwordError = "Password minimal 6 karakter"
+              hasError = true
+            }
+
+            if (hasError) return@Button
+
+            viewModel.signUp(cleanEmail, password, cleanHandle, cleanName, onSignUpSuccess)
           },
-          enabled = !isLoading && username.isNotBlank() && email.isNotBlank(),
+          enabled = !isLoading,
           modifier = Modifier
             .fillMaxWidth()
             .height(54.dp)
@@ -285,18 +406,18 @@ fun SignUpScreen(
           if (isLoading) {
             CircularProgressIndicator(color = PureWhite, modifier = Modifier.size(24.dp))
           } else {
-            Text("Create Account & Claim 500 B", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("Daftar Sekarang (Saldo Awal 0 B)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
           }
         }
       }
 
       Row(
-        modifier = Modifier.padding(bottom = 16.dp),
+        modifier = Modifier.padding(bottom = 16.dp, top = 20.dp),
         verticalAlignment = Alignment.CenterVertically
       ) {
-        Text("Already have an account?", color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
+        Text("Sudah punya akun?", color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
         TextButton(onClick = onNavigateToSignIn) {
-          Text("Sign In", color = ForestGreenPrimary, fontWeight = FontWeight.Bold)
+          Text("Masuk", color = ForestGreenPrimary, fontWeight = FontWeight.Bold)
         }
       }
     }
@@ -337,7 +458,7 @@ fun ForgotPasswordScreen(
     ) {
       Column {
         Text(
-          text = "Enter your registered email address to receive password recovery instructions via Supabase Auth.",
+          text = "Masukkan alamat email terdaftar Anda untuk menerima tautan pemulihan kata sandi via Supabase Auth.",
           style = MaterialTheme.typography.bodyMedium,
           color = TextSecondary
         )
@@ -345,7 +466,7 @@ fun ForgotPasswordScreen(
         OutlinedTextField(
           value = email,
           onValueChange = { email = it },
-          label = { Text("Email Address") },
+          label = { Text("Alamat Email") },
           leadingIcon = { Icon(Icons.Default.Email, contentDescription = null, tint = ForestGreenPrimary) },
           singleLine = true,
           modifier = Modifier.fillMaxWidth(),
@@ -365,7 +486,7 @@ fun ForgotPasswordScreen(
         colors = ButtonDefaults.buttonColors(containerColor = ForestGreenPrimary),
         shape = RoundedCornerShape(16.dp)
       ) {
-        Text("Send Recovery Link", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text("Kirim Tautan Pemulihan", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
       }
     }
   }

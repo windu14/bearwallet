@@ -86,6 +86,9 @@ fun BearWalletApp(
 
   val showBottomBar = bottomNavScreens.any { it.route == currentRoute }
 
+  val currentUser by viewModel.currentUser.collectAsState()
+  val startDestination = if (currentUser == null) Screen.AuthSignIn.route else Screen.Home.route
+
   Scaffold(
     snackbarHost = { SnackbarHost(snackbarHostState) },
     bottomBar = {
@@ -144,7 +147,7 @@ fun BearWalletApp(
   ) { paddingValues ->
     NavHost(
       navController = navController,
-      startDestination = Screen.Home.route,
+      startDestination = startDestination,
       modifier = Modifier.padding(paddingValues)
     ) {
       // 1. Home
@@ -183,7 +186,11 @@ fun BearWalletApp(
         ProfileScreen(
           viewModel = viewModel,
           onNavigateToAdmin = { navController.navigate(Screen.AdminCentralBank.route) },
-          onNavigateToAuth = { navController.navigate(Screen.AuthSignIn.route) }
+          onNavigateToAuth = {
+            navController.navigate(Screen.AuthSignIn.route) {
+              popUpTo(0) { inclusive = true }
+            }
+          }
         )
       }
 

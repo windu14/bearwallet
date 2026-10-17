@@ -267,41 +267,10 @@ BEGIN
         600
     ) ON CONFLICT (id) DO NOTHING;
 
-    -- Check distribution pool
-    SELECT balance INTO v_pool_balance
-    FROM public.system_accounts
-    WHERE account_code = 'SYS_USER_DISTRIBUTION_POOL'
-    FOR UPDATE;
-
-    IF v_pool_balance >= v_bonus THEN
-        -- Deduct from finite distribution pool
-        UPDATE public.system_accounts
-        SET balance = balance - v_bonus, updated_at = now()
-        WHERE account_code = 'SYS_USER_DISTRIBUTION_POOL';
-
-        -- Create wallet with initial bonus
-        INSERT INTO public.wallets (user_id, currency, balance)
-        VALUES (NEW.id, 'BEAR', v_bonus);
-
-        -- Record in immutable ledger
-        INSERT INTO public.ledger_transactions (
-            idempotency_key, transaction_type, amount, fee,
-            source_account, destination_account, note, status
-        ) VALUES (
-            'signup_' || NEW.id::text,
-            'SIGNUP_BONUS',
-            v_bonus,
-            0,
-            'SYS_USER_DISTRIBUTION_POOL',
-            NEW.id::text,
-            'Welcome distribution grant to ' || v_username,
-            'COMPLETED'
-        );
-    ELSE
-        -- Pool exhausted, create wallet with 0
-        INSERT INTO public.wallets (user_id, currency, balance)
-        VALUES (NEW.id, 'BEAR', 0);
-    END IF;
+    -- Create wallet with initial 0 B balance (user requests zero initial balance)
+    INSERT INTO public.wallets (user_id, currency, balance)
+    VALUES (NEW.id, 'BEAR', 0)
+    ON CONFLICT (user_id, currency) DO NOTHING;
 
     RETURN NEW;
 END;

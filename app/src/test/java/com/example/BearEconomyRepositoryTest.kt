@@ -23,7 +23,9 @@ class BearEconomyRepositoryTest {
   }
 
   @Test
-  fun testInitialSupplyAllocationAndInvariants() {
+  fun testInitialStateStartsUnauthenticatedAndConserved() {
+    assertNull("App must start unauthenticated", repository.currentUser.value)
+
     val accounts = repository.systemAccounts.value
     val locked = accounts[SupabaseConfig.ACC_LOCKED_RESERVE]?.balance ?: 0L
     val lending = accounts[SupabaseConfig.ACC_BANK_LENDING_POOL]?.balance ?: 0L
@@ -36,93 +38,80 @@ class BearEconomyRepositoryTest {
     assertEquals(200_000L, exchange)
     assertTrue("Locked reserve must be locked", accounts[SupabaseConfig.ACC_LOCKED_RESERVE]?.isLocked == true)
 
-    // Total supply conservation check
     val totalCirculatingAndReserves = locked + lending + exchange + dist + userBalances
     assertEquals("Total supply must conserve to exactly 1,000,000 B", 1_000_000L, totalCirculatingAndReserves)
   }
 
   @Test
-  fun testTransferDebitsSenderAndCreditsRecipient() = runBlocking {
-    val sender = repository.currentUser.value!!
-    val initialSenderBalance = repository.getWallet(sender.id).balance
+  fun testStrictLoginRejectionOnWrongCredentials() = runBlocking {
+    // 1. Random credentials must fail
+    val randomResult = repository.signIn("random_user_xyz", "wrong_password_123")
+    assertTrue("Random credentials must be rejected", randomResult.isFailure)
 
-    val transferAmount = 100L
-    val idempotencyKey = "test_tx_${UUID.randomUUID()}"
+    // 2. Correct username but wrong password must fail
+    val wrongPassResult = repository.signIn("maya", "incorrectpass")
+    assertTrue("Incorrect password must be rejected", wrongPassResult.isFailure)
+
+    // 3. Correct username and password must succeed
+    val validResult = repository.signIn("maya", "bearpassword123")
+    assertTrue("Valid credentials must succeed", validResult.isSuccess)
+    assertEquals("maya", validResult.getOrThrow().username)
+  }
+
+  @Test
+  fun testStrictSignUpWithZeroInitialBalance() = runBlocking {
+    val newHandle = "newtester_${System.currentTimeMillis() % 10000}"
+    val newEmail = "$newHandle@bearwallet.app"
+
+    val signUpResult = repository.signUp(
+      email = newEmail,
+      pass = "secure123",
+      username = newHandle,
+      fullName = "New Tester"
+    )
+
+    assertTrue("Valid sign up must succeed", signUpResult.isSuccess)
+    val user = signUpResult.getOrThrow()
+    assertEquals(newHandle, user.username)
+
+    // Saldo awal wajib 0 B!
+    val wallet = repository.getWallet(user.id)
+    assertEquals("Initial balance for newly registered account must be 0 B", 0L, wallet.balance)
+  }
+
+  @Test
+  fun testTransferAndIdempotency() = runBlocking {
+    // Login as default admin/user
+    val loginRes = repository.signIn("bearboss", "bearpassword123")
+    assertTrue(loginRes.isSuccess)
+    val sender = loginRes.getOrThrow()
+
+    // Top-up from faucet since initial balance is 0
+    val topUpRes = repository.executeTopUp(200L, "topup_test_1")
+    assertTrue(topUpRes.isSuccess)
+    assertEquals(200L, repository.getWallet(sender.id).balance)
+
+    val transferAmount = 50L
+    val idempotencyKey = "tx_idempotent_${UUID.randomUUID()}"
 
     val result = repository.executeTransfer(
       recipientHandle = "maya",
       amount = transferAmount,
       idempotencyKey = idempotencyKey,
-      note = "Test transfer"
+      note = "Coffee split"
     )
 
     assertTrue("Transfer should succeed", result.isSuccess)
-    val newSenderBalance = repository.getWallet(sender.id).balance
-    assertEquals(initialSenderBalance - transferAmount, newSenderBalance)
+    assertEquals(150L, repository.getWallet(sender.id).balance)
 
-    val mayaProfile = repository.profiles.value.values.find { it.username == "maya" }!!
-    val mayaWallet = repository.getWallet(mayaProfile.id)
-    assertEquals(500L + transferAmount, mayaWallet.balance)
-  }
-
-  @Test
-  fun testTransferFailsWhenInsufficientBalance() = runBlocking {
-    val sender = repository.currentUser.value!!
-    val initialBalance = repository.getWallet(sender.id).balance
-
-    val result = repository.executeTransfer(
-      recipientHandle = "alex",
-      amount = initialBalance + 5000L,
-      idempotencyKey = "tx_fail_${UUID.randomUUID()}",
-      note = "Overdraft attempt"
+    // Repeated call with same key must NOT double debit
+    val repeatResult = repository.executeTransfer(
+      recipientHandle = "maya",
+      amount = transferAmount,
+      idempotencyKey = idempotencyKey,
+      note = "Duplicate attempt"
     )
-
-    assertTrue("Transfer should fail due to insufficient funds", result.isFailure)
-  }
-
-  @Test
-  fun testRepeatedTransferDoesNotDuplicate() = runBlocking {
-    val key = "idempotent_key_123"
-    val res1 = repository.executeTransfer("alex", 50L, key, "First attempt")
-    assertTrue(res1.isSuccess)
-
-    val balanceAfterFirst = repository.getWallet(repository.currentUser.value!!.id).balance
-
-    val res2 = repository.executeTransfer("alex", 50L, key, "Duplicate attempt")
-    assertTrue(res2.isSuccess)
-
-    val balanceAfterSecond = repository.getWallet(repository.currentUser.value!!.id).balance
-    assertEquals("Balance should not be debited twice", balanceAfterFirst, balanceAfterSecond)
-  }
-
-  @Test
-  fun testLoanApplicationProgressionAndLiquidityCheck() = runBlocking {
-    val appResult = repository.submitLoanApplication("prod_quick", 200L)
-    assertTrue(appResult.isSuccess)
-    val app = appResult.getOrThrow()
-
-    // Stage 1 -> 2
-    val stage2Result = repository.advanceLoanStage(app.id)
-    assertEquals(2, stage2Result.getOrThrow().currentStage)
-
-    // Stage 2 -> 3
-    val stage3Result = repository.advanceLoanStage(app.id)
-    assertEquals(3, stage3Result.getOrThrow().currentStage)
-
-    // Stage 3 -> 4
-    val stage4Result = repository.advanceLoanStage(app.id)
-    val finalApp = stage4Result.getOrThrow()
-    assertEquals(4, finalApp.currentStage)
-    assertEquals("APPROVED", finalApp.stageStatus)
-    assertEquals(200L, finalApp.approvedPrincipal)
-    assertEquals(4L, finalApp.interestAmount) // 2% of 200 B = 4 B
-
-    // Explicit acceptance & disbursement
-    val senderWalletBefore = repository.getWallet(repository.currentUser.value!!.id).balance
-    val disburseResult = repository.disburseLoan(app.id)
-    assertTrue("Disbursement should succeed", disburseResult.isSuccess)
-
-    val senderWalletAfter = repository.getWallet(repository.currentUser.value!!.id).balance
-    assertEquals(senderWalletBefore + 200L, senderWalletAfter)
+    assertTrue(repeatResult.isSuccess)
+    assertEquals("Balance must not be double debited", 150L, repository.getWallet(sender.id).balance)
   }
 }

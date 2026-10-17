@@ -14,7 +14,7 @@ object SupabaseConfig {
   const val CURRENCY_SYMBOL = "B"
   const val INITIAL_REFERENCE_RATE_IDR = 10.0 // 1 BEAR = 10 IDR
   const val MAX_AUTHORIZED_SUPPLY = 1_000_000L
-  const val INITIAL_USER_SIGNUP_BONUS = 500L
+  const val INITIAL_USER_SIGNUP_BONUS = 0L
 
   // System accounts codes
   const val ACC_LOCKED_RESERVE = "SYS_LOCKED_RESERVE"
