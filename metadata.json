@@ -1,0 +1,6 @@
+{
+  "name": "BearWallet",
+  "description": "Native Android social banking & closed-loop economy simulator featuring wallets, dynamic currency exchange, credit scoring, and bank loans.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
