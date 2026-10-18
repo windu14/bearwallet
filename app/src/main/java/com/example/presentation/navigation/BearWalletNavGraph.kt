@@ -29,11 +29,11 @@ import com.example.presentation.screens.*
 import com.example.ui.theme.*
 
 sealed class Screen(val route: String, val title: String = "", val icon: ImageVector = Icons.Default.Home) {
-  object Home : Screen("home", "Home", Icons.Default.Home)
-  object Exchange : Screen("exchange", "Exchange", Icons.Default.CurrencyExchange)
-  object Banking : Screen("banking", "Banking", Icons.Default.AccountBalance)
-  object Activity : Screen("activity", "Activity", Icons.Default.ReceiptLong)
-  object Profile : Screen("profile", "Profile", Icons.Default.Person)
+  object Home : Screen("home", "Beranda", Icons.Default.Home)
+  object Exchange : Screen("exchange", "Pasar", Icons.Default.CurrencyExchange)
+  object Banking : Screen("banking", "Bank", Icons.Default.AccountBalance)
+  object Activity : Screen("activity", "Aktivitas", Icons.Default.ReceiptLong)
+  object Profile : Screen("profile", "Profil", Icons.Default.Person)
 
   object TransferInput : Screen("transfer_input", "Transfer")
   object TransferConfirm : Screen("transfer_confirm/{recipient}/{amount}/{note}", "Confirm Transfer") {
@@ -55,10 +55,9 @@ sealed class Screen(val route: String, val title: String = "", val icon: ImageVe
   object AuthForgotPassword : Screen("auth_forgot_password", "Forgot Password")
 }
 
+// Streamlined bottom bar (No duplicate icons that are already on Home card)
 val bottomNavScreens = listOf(
   Screen.Home,
-  Screen.Exchange,
-  Screen.Banking,
   Screen.Activity,
   Screen.Profile
 )
@@ -162,17 +161,21 @@ fun BearWalletApp(
         )
       }
 
-      // 2. Exchange
+      // 2. Exchange (Accessible directly via Home Card)
       composable(Screen.Exchange.route) {
-        ExchangeMarketScreen(viewModel = viewModel)
+        ExchangeMarketScreen(
+          viewModel = viewModel,
+          onNavigateBack = { navController.popBackStack() }
+        )
       }
 
-      // 3. Banking
+      // 3. Banking (Accessible directly via Home Card)
       composable(Screen.Banking.route) {
         BankingOverviewScreen(
           viewModel = viewModel,
           onNavigateToApplyLoan = { navController.navigate(Screen.LoanApply.route) },
-          onNavigateToProcessing = { appId -> navController.navigate(Screen.LoanProcessing.createRoute(appId)) }
+          onNavigateToProcessing = { appId -> navController.navigate(Screen.LoanProcessing.createRoute(appId)) },
+          onNavigateBack = { navController.popBackStack() }
         )
       }
 

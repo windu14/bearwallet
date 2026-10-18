@@ -1,6 +1,7 @@
 package com.example.presentation
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.model.*
 import com.example.data.repository.BearEconomyRepository
@@ -17,8 +18,10 @@ sealed interface UiMessage {
 }
 
 class MainViewModel(
-  val repository: BearEconomyRepository = BearEconomyRepository()
-) : ViewModel() {
+  application: Application
+) : AndroidViewModel(application) {
+
+  val repository: BearEconomyRepository = BearEconomyRepository.getInstance(application.applicationContext)
 
   val currentUser: StateFlow<UserProfile?> = repository.currentUser
   val systemAccounts: StateFlow<Map<String, SystemAccount>> = repository.systemAccounts
@@ -61,10 +64,10 @@ class MainViewModel(
       val result = repository.signIn(emailOrHandle, pass)
       _isOperationLoading.value = false
       result.onSuccess {
-        _uiMessage.value = UiMessage.Success("Welcome back, @${it.username}!")
+        _uiMessage.value = UiMessage.Success("Selamat datang kembali, @${it.username}!")
         onSuccess()
       }.onFailure {
-        _uiMessage.value = UiMessage.Error(it.message ?: "Failed to sign in")
+        _uiMessage.value = UiMessage.Error(it.message ?: "Gagal masuk")
       }
     }
   }
@@ -75,10 +78,10 @@ class MainViewModel(
       val result = repository.signUp(email, pass, username, fullName)
       _isOperationLoading.value = false
       result.onSuccess {
-        _uiMessage.value = UiMessage.Success("Account created! 500 B initial grant credited.")
+        _uiMessage.value = UiMessage.Success("Akun berhasil dibuat! Saldo awal 0 B & Rp 0.")
         onSuccess()
       }.onFailure {
-        _uiMessage.value = UiMessage.Error(it.message ?: "Sign up failed")
+        _uiMessage.value = UiMessage.Error(it.message ?: "Pendaftaran gagal")
       }
     }
   }
@@ -88,18 +91,18 @@ class MainViewModel(
       _isOperationLoading.value = true
       repository.recoverPassword(email)
       _isOperationLoading.value = false
-      _uiMessage.value = UiMessage.Success("Password recovery instructions sent if email exists.")
+      _uiMessage.value = UiMessage.Success("Petunjuk pemulihan kata sandi telah dikirim.")
     }
   }
 
   fun signOut() {
     repository.signOut()
-    _uiMessage.value = UiMessage.Success("Signed out successfully.")
+    _uiMessage.value = UiMessage.Success("Berhasil keluar dari akun.")
   }
 
   fun switchUser(userId: String) {
     repository.switchUser(userId)
-    _uiMessage.value = UiMessage.Success("Switched active user.")
+    _uiMessage.value = UiMessage.Success("Berhasil beralih akun pengguna.")
   }
 
   // --- Wallet & Transfer ---
@@ -124,29 +127,30 @@ class MainViewModel(
       result.onSuccess { tx ->
         _lastTransferTx.value = tx
         _lastTransferRecipient.value = recipientProfile
-        _uiMessage.value = UiMessage.Success("Transferred $amount B successfully!")
+        _uiMessage.value = UiMessage.Success("Berhasil mentransfer $amount B ke @${recipientProfile?.username ?: cleanHandle}!")
         onSuccess()
       }.onFailure {
-        _uiMessage.value = UiMessage.Error(it.message ?: "Transfer failed")
+        _uiMessage.value = UiMessage.Error(it.message ?: "Transfer gagal")
       }
     }
   }
 
-  fun executeTopUp(amount: Long) {
+  // Real IDR Top-Up via Bank / Virtual Account Simulator
+  fun executeTopUpIdr(amountIdr: Long, paymentMethod: String) {
     viewModelScope.launch {
       _isOperationLoading.value = true
-      val key = "topup_${UUID.randomUUID()}"
-      val result = repository.executeTopUp(amount, key)
+      val key = "topup_idr_${UUID.randomUUID()}"
+      val result = repository.executeTopUpIdr(amountIdr, paymentMethod, key)
       _isOperationLoading.value = false
       result.onSuccess {
-        _uiMessage.value = UiMessage.Success("Claimed $amount B from the community distribution inventory!")
+        _uiMessage.value = UiMessage.Success("Top-Up Berhasil! Saldo IDR bertambah Rp $amountIdr via $paymentMethod.")
       }.onFailure {
-        _uiMessage.value = UiMessage.Error(it.message ?: "Top-up failed")
+        _uiMessage.value = UiMessage.Error(it.message ?: "Top-up IDR gagal")
       }
     }
   }
 
-  // --- Exchange ---
+  // --- Exchange Market ---
 
   fun executeExchangeTrade(orderType: String, bearAmount: Long) {
     viewModelScope.launch {
@@ -155,9 +159,10 @@ class MainViewModel(
       val result = repository.executeExchangeTrade(orderType, bearAmount, key)
       _isOperationLoading.value = false
       result.onSuccess { order ->
-        _uiMessage.value = UiMessage.Success("$orderType ${order.bearAmount} B executed at ${order.rateApplied} IDR (Simulated Rp ${order.idrAmount})")
+        val verb = if (order.orderType == "BUY") "Beli" else "Jual"
+        _uiMessage.value = UiMessage.Success("$verb ${order.bearAmount} B berhasil pada kurs Rp ${order.rateApplied} (Total: Rp ${order.idrAmount})")
       }.onFailure {
-        _uiMessage.value = UiMessage.Error(it.message ?: "Trade failed")
+        _uiMessage.value = UiMessage.Error(it.message ?: "Transaksi bursa gagal")
       }
     }
   }
@@ -167,7 +172,7 @@ class MainViewModel(
       _isOperationLoading.value = true
       val record = repository.triggerMarketRateUpdate(customEvent)
       _isOperationLoading.value = false
-      _uiMessage.value = UiMessage.Success("Market rate updated to ${record.rateIdr} IDR (${if (record.changePercent >= 0) "+" else ""}${record.changePercent}%)")
+      _uiMessage.value = UiMessage.Success("Kurs bursa diperbarui: Rp ${record.rateIdr}/BEAR (${if (record.changePercent >= 0) "+" else ""}${record.changePercent}%)")
     }
   }
 
@@ -183,7 +188,7 @@ class MainViewModel(
         onSubmitted(app.id)
         startFourStageWorker(app.id)
       }.onFailure {
-        _uiMessage.value = UiMessage.Error(it.message ?: "Loan application failed")
+        _uiMessage.value = UiMessage.Error(it.message ?: "Pengajuan pinjaman gagal")
       }
     }
   }
@@ -198,9 +203,6 @@ class MainViewModel(
 
   private fun startFourStageWorker(appId: String) {
     viewModelScope.launch {
-      // 4-Stage progression with persistent state in backend repository:
-      // Stage 1 (Eligibility) -> Stage 2 (Credit Score) -> Stage 3 (Liquidity) -> Stage 4 (Decision)
-      // Progression delay allows user to observe authentic verification and stages
       while (true) {
         val current = repository.loanApplications.value.find { it.id == appId } ?: break
         _currentLoanApp.value = current
@@ -209,8 +211,8 @@ class MainViewModel(
           break
         }
 
-        // Processing pause for realistic compliance & liquidity verification (~4 seconds per stage in mobile app)
-        delay(4000)
+        // Realistic verification pause (~3.5 seconds per stage)
+        delay(3500)
         val advanceResult = repository.advanceLoanStage(appId)
         advanceResult.onSuccess { updated ->
           _currentLoanApp.value = updated
@@ -225,10 +227,10 @@ class MainViewModel(
       val result = repository.disburseLoan(applicationId)
       _isOperationLoading.value = false
       result.onSuccess {
-        _uiMessage.value = UiMessage.Success("Loan disbursed! ${it.principalAmount} B added to your wallet.")
+        _uiMessage.value = UiMessage.Success("Pinjaman dicairkan! ${it.principalAmount} B telah ditambahkan ke wallet Anda.")
         onDisbursed()
       }.onFailure {
-        _uiMessage.value = UiMessage.Error(it.message ?: "Disbursement failed")
+        _uiMessage.value = UiMessage.Error(it.message ?: "Pencairan pinjaman gagal")
       }
     }
   }
@@ -240,11 +242,11 @@ class MainViewModel(
       _isOperationLoading.value = false
       result.onSuccess {
         _uiMessage.value = UiMessage.Success(
-          if (it.status == "PAID") "Loan fully settled! Credit score increased."
-          else "Repaid $amount B. Remaining balance: ${it.remainingAmount} B."
+          if (it.status == "PAID") "Pinjaman berhasil lunas seluruhnya! Skor kredit meningkat."
+          else "Berhasil membayar $amount B. Sisa pinjaman: ${it.remainingAmount} B."
         )
       }.onFailure {
-        _uiMessage.value = UiMessage.Error(it.message ?: "Repayment failed")
+        _uiMessage.value = UiMessage.Error(it.message ?: "Pelunasan gagal")
       }
     }
   }
@@ -257,9 +259,9 @@ class MainViewModel(
       val result = repository.updateCentralBankSettings(isPaused, intervalHours)
       _isOperationLoading.value = false
       result.onSuccess {
-        _uiMessage.value = UiMessage.Success("Central Bank settings updated.")
+        _uiMessage.value = UiMessage.Success("Pengaturan Bank Sentral berhasil diperbarui.")
       }.onFailure {
-        _uiMessage.value = UiMessage.Error(it.message ?: "Update failed")
+        _uiMessage.value = UiMessage.Error(it.message ?: "Pembaruan gagal")
       }
     }
   }

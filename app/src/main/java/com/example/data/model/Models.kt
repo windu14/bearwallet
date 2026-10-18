@@ -20,6 +20,7 @@ data class WalletAccount(
   val userId: String,
   val currency: String = "BEAR",
   val balance: Long = 0L,
+  val virtualIdrBalance: Long = 0L, // Initial 0 IDR cash balance
   val lockedBalance: Long = 0L,
   val updatedAt: Long = System.currentTimeMillis()
 )
@@ -36,6 +37,7 @@ enum class TransactionType {
   SIGNUP_BONUS,
   TRANSFER,
   TOPUP,
+  TOPUP_IDR,
   EXCHANGE_BUY,
   EXCHANGE_SELL,
   LOAN_DISBURSEMENT,
@@ -146,6 +148,8 @@ data class CentralBankSettings(
   val updateIntervalHours: Int = 4,
   val isMarketPaused: Boolean = false,
   val currentRateIdr: Double = 10.0,
+  val minRateClamp: Double = 1.0,
+  val maxRateClamp: Double = 100.0,
   val lockedReserve: Long = 100_000L,
   val lendingPool: Long = 250_000L,
   val exchangeInventory: Long = 200_000L,

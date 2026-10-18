@@ -69,6 +69,7 @@ fun SimulatorDisclaimerBanner(modifier: Modifier = Modifier) {
 @Composable
 fun BearBalanceCard(
   balance: Long,
+  virtualIdrBalance: Long = 0L,
   currentRateIdr: Double,
   changePercent: Double,
   onTransferClick: () -> Unit,
@@ -78,8 +79,9 @@ fun BearBalanceCard(
   modifier: Modifier = Modifier
 ) {
   var isBalanceVisible by remember { mutableStateOf(true) }
-  val formattedIdr = NumberFormat.getNumberInstance(Locale.US).format(Math.round(balance * currentRateIdr))
+  val formattedIdrValuation = NumberFormat.getNumberInstance(Locale.US).format(Math.round(balance * currentRateIdr))
   val formattedBalance = NumberFormat.getNumberInstance(Locale.US).format(balance)
+  val formattedIdrCash = NumberFormat.getNumberInstance(Locale.US).format(virtualIdrBalance)
 
   Card(
     modifier = modifier
@@ -144,39 +146,66 @@ fun BearBalanceCard(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Balance Display
-        Text(
-          text = "Available Balance",
-          style = MaterialTheme.typography.bodySmall,
-          color = SageSurface.copy(alpha = 0.8f)
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Row(verticalAlignment = Alignment.Bottom) {
-          Text(
-            text = if (isBalanceVisible) formattedBalance else "••••••",
-            style = MaterialTheme.typography.displayMedium,
-            color = PureWhite,
-            fontWeight = FontWeight.Bold
-          )
-          Spacer(modifier = Modifier.width(6.dp))
-          Text(
-            text = SupabaseConfig.CURRENCY_CODE,
-            style = MaterialTheme.typography.titleMedium,
-            color = MintLight,
-            modifier = Modifier.padding(bottom = 6.dp)
-          )
+        // Dual Balance Display: BEAR Asset & IDR Cash
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.Bottom
+        ) {
+          Column {
+            Text(
+              text = "Saldo BEAR",
+              style = MaterialTheme.typography.bodySmall,
+              color = SageSurface.copy(alpha = 0.8f)
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.Bottom) {
+              Text(
+                text = if (isBalanceVisible) formattedBalance else "••••••",
+                style = MaterialTheme.typography.displayMedium,
+                color = PureWhite,
+                fontWeight = FontWeight.Bold
+              )
+              Spacer(modifier = Modifier.width(6.dp))
+              Text(
+                text = SupabaseConfig.CURRENCY_CODE,
+                style = MaterialTheme.typography.titleMedium,
+                color = MintLight,
+                modifier = Modifier.padding(bottom = 6.dp)
+              )
+            }
+          }
+
+          Column(horizontalAlignment = Alignment.End) {
+            Text(
+              text = "Saldo Kas IDR",
+              style = MaterialTheme.typography.bodySmall,
+              color = SageSurface.copy(alpha = 0.8f)
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+              text = if (isBalanceVisible) "Rp $formattedIdrCash" else "Rp ••••••",
+              style = MaterialTheme.typography.titleLarge,
+              color = MintLight,
+              fontWeight = FontWeight.Bold
+            )
+          }
         }
 
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
-        // Reference IDR valuation
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // Reference IDR valuation & Market Rate Badge
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically
+        ) {
           Text(
-            text = if (isBalanceVisible) "≈ Rp $formattedIdr (Simulated)" else "≈ Rp ••••••",
+            text = if (isBalanceVisible) "Estimasi Aset: Rp $formattedIdrValuation" else "Estimasi Aset: Rp ••••••",
             style = MaterialTheme.typography.bodyMedium,
             color = MintContainer.copy(alpha = 0.9f)
           )
-          Spacer(modifier = Modifier.width(8.dp))
+
           Surface(
             color = if (changePercent >= 0) PositiveGreenBg.copy(alpha = 0.2f) else NegativeRedBg.copy(alpha = 0.2f),
             shape = RoundedCornerShape(6.dp)
@@ -204,7 +233,7 @@ fun BearBalanceCard(
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // Action shortcuts row
+        // Action shortcuts row (Clean & direct to all core features)
         Row(
           modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.SpaceBetween
@@ -217,13 +246,13 @@ fun BearBalanceCard(
           )
           ActionPillButton(
             icon = Icons.Default.AddCircleOutline,
-            label = "Top-up",
+            label = "Top-Up IDR",
             onClick = onTopUpClick,
             modifier = Modifier.testTag("action_topup")
           )
           ActionPillButton(
             icon = Icons.Default.CurrencyExchange,
-            label = "Exchange",
+            label = "Pasar BEAR",
             onClick = onExchangeClick,
             modifier = Modifier.testTag("action_exchange")
           )

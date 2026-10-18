@@ -8,6 +8,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.TrendingDown
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.*
@@ -35,6 +36,7 @@ import java.util.*
 @Composable
 fun ExchangeMarketScreen(
   viewModel: MainViewModel,
+  onNavigateBack: () -> Unit = {},
   modifier: Modifier = Modifier
 ) {
   val settings by viewModel.centralBankSettings.collectAsState()
@@ -58,11 +60,20 @@ fun ExchangeMarketScreen(
       TopAppBar(
         title = {
           Text(
-            "Bear Exchange Market",
+            "Pasar Bursa BEAR",
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
             color = ForestGreenPrimary
           )
+        },
+        navigationIcon = {
+          IconButton(onClick = onNavigateBack) {
+            Icon(
+              imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+              contentDescription = "Kembali ke Beranda",
+              tint = ForestGreenPrimary
+            )
+          }
         },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = WarmWhite)
       )
@@ -79,6 +90,43 @@ fun ExchangeMarketScreen(
     ) {
       item { SimulatorDisclaimerBanner() }
 
+      // User Balance Bar
+      item {
+        Surface(
+          color = PureWhite,
+          shape = RoundedCornerShape(14.dp),
+          modifier = Modifier.fillMaxWidth(),
+          tonalElevation = 1.dp
+        ) {
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Column {
+              Text("Saldo BEAR Anda", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+              Text(
+                "${NumberFormat.getNumberInstance(Locale.US).format(userWallet?.balance ?: 0L)} B",
+                fontWeight = FontWeight.Bold,
+                color = ForestGreenPrimary,
+                style = MaterialTheme.typography.titleMedium
+              )
+            }
+            Column(horizontalAlignment = Alignment.End) {
+              Text("Saldo Kas IDR", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+              Text(
+                "Rp ${NumberFormat.getNumberInstance(Locale.US).format(userWallet?.virtualIdrBalance ?: 0L)}",
+                fontWeight = FontWeight.Bold,
+                color = ForestGreenPrimary,
+                style = MaterialTheme.typography.titleMedium
+              )
+            }
+          }
+        }
+      }
+
       // Rate Hero Card
       item {
         Card(
@@ -94,7 +142,7 @@ fun ExchangeMarketScreen(
               verticalAlignment = Alignment.CenterVertically
             ) {
               Text(
-                text = "1 BEAR Reference Price",
+                text = "Harga Referensi 1 BEAR",
                 style = MaterialTheme.typography.bodyMedium,
                 color = TextSecondary
               )
@@ -162,121 +210,84 @@ fun ExchangeMarketScreen(
               }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Interactive Chart
-            ExchangeRateChart(
-              rates = when (selectedTimeRange) {
-                "24H" -> rates.takeLast(6)
-                "7D" -> rates.takeLast(14)
-                else -> rates
-              },
-              isMini = false
-            )
-
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Trading Actions Row
-            Row(
-              modifier = Modifier.fillMaxWidth(),
-              horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-              Button(
-                onClick = {
-                  tradeOrderType = "BUY"
-                  showTradeDialog = true
-                },
-                modifier = Modifier
-                  .weight(1f)
-                  .height(48.dp)
-                  .testTag("exchange_buy_button"),
-                colors = ButtonDefaults.buttonColors(containerColor = ForestGreenPrimary),
-                shape = RoundedCornerShape(14.dp)
-              ) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Buy Bear", fontWeight = FontWeight.Bold)
-              }
-
-              Button(
-                onClick = {
-                  tradeOrderType = "SELL"
-                  showTradeDialog = true
-                },
-                modifier = Modifier
-                  .weight(1f)
-                  .height(48.dp)
-                  .testTag("exchange_sell_button"),
-                colors = ButtonDefaults.buttonColors(containerColor = MintSecondary),
-                shape = RoundedCornerShape(14.dp)
-              ) {
-                Icon(Icons.Default.Remove, contentDescription = null, modifier = Modifier.size(18.dp), tint = ForestGreenDark)
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Sell Bear", fontWeight = FontWeight.Bold, color = ForestGreenDark)
-              }
-            }
-          }
-        }
-      }
-
-      // Market Info & Invariants
-      item {
-        Card(
-          modifier = Modifier.fillMaxWidth(),
-          shape = RoundedCornerShape(20.dp),
-          colors = CardDefaults.cardColors(containerColor = PureWhite)
-        ) {
-          Column(modifier = Modifier.padding(18.dp)) {
-            Text(
-              text = "Market Liquidity & Rules",
-              style = MaterialTheme.typography.titleSmall,
-              fontWeight = FontWeight.Bold,
-              color = TextPrimary
+            ExchangeRateChart(
+              rates = rates,
+              modifier = Modifier
+                .fillMaxWidth()
+                .height(160.dp)
             )
-            Spacer(modifier = Modifier.height(12.dp))
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Liquidity & Status Row
             Row(
               modifier = Modifier.fillMaxWidth(),
               horizontalArrangement = Arrangement.SpaceBetween
             ) {
-              Text("Exchange Bear Inventory", color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
+              Text(
+                text = "Stok Likuiditas Bursa:",
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary
+              )
               Text(
                 text = "${NumberFormat.getNumberInstance(Locale.US).format(exchangeInventory)} B",
+                style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.Bold,
                 color = ForestGreenPrimary
               )
             }
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-              modifier = Modifier.fillMaxWidth(),
-              horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-              Text("Market Status", color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
-              Text(
-                text = if (settings.isMarketPaused) "Paused (Maintenance)" else "Active (Continuous)",
-                fontWeight = FontWeight.Bold,
-                color = if (settings.isMarketPaused) WarningAmber else PositiveGreen
-              )
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-              modifier = Modifier.fillMaxWidth(),
-              horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-              Text("Update Interval", color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
-              Text(
-                text = "Every ${settings.updateIntervalHours} Hours",
-                fontWeight = FontWeight.SemiBold,
-                color = TextPrimary
-              )
-            }
           }
         }
       }
 
-      // Recent Rate History & Market Events
+      // Buy & Sell Order Action Buttons
+      item {
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+          Button(
+            onClick = {
+              tradeOrderType = "BUY"
+              showTradeDialog = true
+            },
+            modifier = Modifier
+              .weight(1f)
+              .height(52.dp)
+              .testTag("exchange_buy_button"),
+            colors = ButtonDefaults.buttonColors(containerColor = PositiveGreen),
+            shape = RoundedCornerShape(14.dp)
+          ) {
+            Icon(Icons.Default.ShoppingBag, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Beli BEAR", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+          }
+
+          Button(
+            onClick = {
+              tradeOrderType = "SELL"
+              showTradeDialog = true
+            },
+            modifier = Modifier
+              .weight(1f)
+              .height(52.dp)
+              .testTag("exchange_sell_button"),
+            colors = ButtonDefaults.buttonColors(containerColor = NegativeRed),
+            shape = RoundedCornerShape(14.dp)
+          ) {
+            Icon(Icons.Default.Sell, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Jual BEAR", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+          }
+        }
+      }
+
+      // Market History Section
       item {
         Text(
-          text = "Authoritative Market Settlements",
+          text = "Riwayat Pembaruan Kurs",
           style = MaterialTheme.typography.titleMedium,
           fontWeight = FontWeight.Bold,
           color = TextPrimary
@@ -297,6 +308,7 @@ fun ExchangeMarketScreen(
       currentRate = settings.currentRateIdr,
       availableInventory = exchangeInventory,
       userBalance = userWallet?.balance ?: 0L,
+      userIdrBalance = userWallet?.virtualIdrBalance ?: 0L,
       onDismiss = { showTradeDialog = false },
       onConfirm = { amount ->
         viewModel.executeExchangeTrade(tradeOrderType, amount)
@@ -363,21 +375,30 @@ fun ExchangeTradeDialog(
   currentRate: Double,
   availableInventory: Long,
   userBalance: Long,
+  userIdrBalance: Long,
   onDismiss: () -> Unit,
   onConfirm: (Long) -> Unit
 ) {
-  var amountText by remember { mutableStateOf("50") }
+  var amountText by remember { mutableStateOf("10") }
   val amount = amountText.toLongOrNull() ?: 0L
   val simulatedIdr = Math.round(amount * currentRate)
 
-  val maxAvailable = if (orderType == "BUY") availableInventory else userBalance
-  val isError = amount <= 0 || amount > maxAvailable
+  val isBuy = orderType == "BUY"
+  val hasEnoughIdr = userIdrBalance >= simulatedIdr
+  val hasEnoughInventory = availableInventory >= amount
+  val hasEnoughBear = userBalance >= amount
+
+  val isError = if (isBuy) {
+    amount <= 0 || !hasEnoughIdr || !hasEnoughInventory
+  } else {
+    amount <= 0 || !hasEnoughBear
+  }
 
   AlertDialog(
     onDismissRequest = onDismiss,
     title = {
       Text(
-        text = if (orderType == "BUY") "Buy Bear" else "Sell Bear",
+        text = if (isBuy) "Beli BEAR di Bursa" else "Jual BEAR ke Bursa",
         style = MaterialTheme.typography.titleLarge,
         fontWeight = FontWeight.Bold,
         color = ForestGreenPrimary
@@ -386,7 +407,7 @@ fun ExchangeTradeDialog(
     text = {
       Column {
         Text(
-          text = "Simulated transaction against server exchange inventory at 1 BEAR = Rp $currentRate.",
+          text = "Harga referensi bursa: 1 BEAR = Rp $currentRate.",
           style = MaterialTheme.typography.bodySmall,
           color = TextSecondary
         )
@@ -397,42 +418,97 @@ fun ExchangeTradeDialog(
           onValueChange = {
             if (it.all { c -> c.isDigit() }) amountText = it
           },
-          label = { Text("Bear Amount") },
+          label = { Text("Jumlah BEAR") },
           trailingIcon = { Text("BEAR", fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 12.dp)) },
           keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
           singleLine = true,
           modifier = Modifier.fillMaxWidth()
         )
 
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Surface(
+          color = SageSurface,
+          shape = RoundedCornerShape(10.dp),
+          modifier = Modifier.fillMaxWidth()
+        ) {
+          Column(modifier = Modifier.padding(10.dp)) {
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+              Text("Total Biaya/Hasil:", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+              Text(
+                "Rp ${NumberFormat.getNumberInstance(Locale.US).format(simulatedIdr)}",
+                fontWeight = FontWeight.Bold,
+                color = ForestGreenPrimary
+              )
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+              Text("Saldo IDR Anda:", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+              Text(
+                "Rp ${NumberFormat.getNumberInstance(Locale.US).format(userIdrBalance)}",
+                fontWeight = FontWeight.SemiBold,
+                color = if (!hasEnoughIdr && isBuy) NegativeRed else TextPrimary
+              )
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+              Text("Saldo BEAR Anda:", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+              Text(
+                "$userBalance B",
+                fontWeight = FontWeight.SemiBold,
+                color = if (!hasEnoughBear && !isBuy) NegativeRed else TextPrimary
+              )
+            }
+          }
+        }
+
         Spacer(modifier = Modifier.height(8.dp))
 
-        Text(
-          text = "Estimated Simulated Value: Rp ${NumberFormat.getNumberInstance(Locale.US).format(simulatedIdr)}",
-          style = MaterialTheme.typography.bodyMedium,
-          fontWeight = FontWeight.SemiBold,
-          color = ForestGreenPrimary
-        )
-
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-          text = "Maximum available to $orderType: $maxAvailable B",
-          style = MaterialTheme.typography.bodySmall,
-          color = if (isError) NegativeRed else TextTertiary
-        )
+        if (isBuy && !hasEnoughIdr) {
+          Text(
+            text = "Saldo IDR Anda tidak mencukupi untuk membeli nominal ini. Silakan Top-Up Saldo IDR terlebih dahulu.",
+            style = MaterialTheme.typography.bodySmall,
+            color = NegativeRed,
+            fontWeight = FontWeight.SemiBold
+          )
+        } else if (isBuy && !hasEnoughInventory) {
+          Text(
+            text = "Stok bursa tidak mencukupi (Tersedia $availableInventory B).",
+            style = MaterialTheme.typography.bodySmall,
+            color = NegativeRed,
+            fontWeight = FontWeight.SemiBold
+          )
+        } else if (!isBuy && !hasEnoughBear) {
+          Text(
+            text = "Saldo BEAR Anda tidak mencukupi untuk menjual nominal ini.",
+            style = MaterialTheme.typography.bodySmall,
+            color = NegativeRed,
+            fontWeight = FontWeight.SemiBold
+          )
+        }
       }
     },
     confirmButton = {
       Button(
         onClick = { onConfirm(amount) },
         enabled = !isError,
-        colors = ButtonDefaults.buttonColors(containerColor = ForestGreenPrimary)
+        colors = ButtonDefaults.buttonColors(containerColor = if (isBuy) PositiveGreen else NegativeRed)
       ) {
-        Text("Execute $orderType")
+        Text(if (isBuy) "Beli Sekarang (Rp ${NumberFormat.getNumberInstance(Locale.US).format(simulatedIdr)})" else "Jual Sekarang")
       }
     },
     dismissButton = {
       TextButton(onClick = onDismiss) {
-        Text("Cancel", color = TextSecondary)
+        Text("Batal", color = TextSecondary)
       }
     }
   )

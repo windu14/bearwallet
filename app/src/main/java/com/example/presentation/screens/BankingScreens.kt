@@ -38,6 +38,7 @@ fun BankingOverviewScreen(
   viewModel: MainViewModel,
   onNavigateToApplyLoan: () -> Unit,
   onNavigateToProcessing: (String) -> Unit,
+  onNavigateBack: () -> Unit = {},
   modifier: Modifier = Modifier
 ) {
   val currentUser by viewModel.currentUser.collectAsState()
@@ -64,6 +65,15 @@ fun BankingOverviewScreen(
             fontWeight = FontWeight.Bold,
             color = ForestGreenPrimary
           )
+        },
+        navigationIcon = {
+          IconButton(onClick = onNavigateBack) {
+            Icon(
+              imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+              contentDescription = "Kembali ke Beranda",
+              tint = ForestGreenPrimary
+            )
+          }
         },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = WarmWhite)
       )

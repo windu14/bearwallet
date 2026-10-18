@@ -1,20 +1,34 @@
 package com.example.data.repository
 
+import android.content.Context
 import com.example.core.config.SupabaseConfig
 import com.example.core.network.SupabaseNetworkClient
+import com.example.core.storage.BearLocalStorage
 import com.example.data.model.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import org.json.JSONObject
 import java.util.UUID
 
 class BearEconomyRepository(
+  private val context: Context? = null,
   private val networkClient: SupabaseNetworkClient = SupabaseNetworkClient()
 ) {
   private val mutex = Mutex()
+  private val storage = context?.let { BearLocalStorage(it.applicationContext) }
+
+  companion object {
+    @Volatile
+    private var INSTANCE: BearEconomyRepository? = null
+
+    fun getInstance(context: Context? = null): BearEconomyRepository {
+      return INSTANCE ?: synchronized(this) {
+        INSTANCE ?: BearEconomyRepository(context).also { INSTANCE = it }
+      }
+    }
+  }
 
   // Current authenticated user session
   private val _currentUser = MutableStateFlow<UserProfile?>(null)
@@ -72,11 +86,52 @@ class BearEconomyRepository(
   val isSupabaseConnected: StateFlow<Boolean?> = _isSupabaseConnected.asStateFlow()
 
   init {
-    initializeAuthoritativeEconomy()
+    val persisted = storage?.loadState()
+    if (persisted != null) {
+      _profiles.value = persisted.profiles
+      _userCredentials.putAll(persisted.credentials)
+      _wallets.value = persisted.wallets
+      _systemAccounts.value = persisted.systemAccounts
+      _centralBankSettings.value = persisted.centralBankSettings
+      _exchangeRates.value = persisted.exchangeRates
+      _loanProducts.value = persisted.loanProducts
+      _loanApplications.value = persisted.loanApplications
+      _activeLoans.value = persisted.activeLoans
+      _transactions.value = persisted.transactions
+      _notifications.value = persisted.notifications
+      _auditLogs.value = persisted.auditLogs
+
+      // Restore active user session if exists
+      val activeUser = persisted.activeUserId?.let { persisted.profiles[it] }
+      _currentUser.value = activeUser
+    } else {
+      initializeAuthoritativeEconomy()
+      persistState()
+    }
+  }
+
+  private fun persistState() {
+    storage?.saveState(
+      BearLocalStorage.PersistedState(
+        activeUserId = _currentUser.value?.id,
+        profiles = _profiles.value,
+        credentials = _userCredentials,
+        wallets = _wallets.value,
+        systemAccounts = _systemAccounts.value,
+        centralBankSettings = _centralBankSettings.value,
+        exchangeRates = _exchangeRates.value,
+        loanProducts = _loanProducts.value,
+        loanApplications = _loanApplications.value,
+        activeLoans = _activeLoans.value,
+        transactions = _transactions.value,
+        notifications = _notifications.value,
+        auditLogs = _auditLogs.value
+      )
+    )
   }
 
   private fun initializeAuthoritativeEconomy() {
-    // 1. Proposed initial supply split (Total = 1,000,000 B)
+    // 1. Initial supply split (Total = 1,000,000 B)
     val initialSystemAccounts = mapOf(
       SupabaseConfig.ACC_LOCKED_RESERVE to SystemAccount(
         accountCode = SupabaseConfig.ACC_LOCKED_RESERVE,
@@ -203,38 +258,37 @@ class BearEconomyRepository(
       role = "admin",
       creditScore = 850
     )
-    // Default active user
-    val defaultUser = UserProfile(
+    val userBearBoss = UserProfile(
       id = "user_bearboss",
-      email = "windu.mariposa@gmail.com",
+      email = "bearboss@bearwallet.app",
       username = "bearboss",
-      fullName = "Windu Mariposa",
+      fullName = "Bear Boss Admin",
       role = "admin",
-      creditScore = 680
+      creditScore = 750
     )
 
     _profiles.value = mapOf(
-      defaultUser.id to defaultUser,
+      userBearBoss.id to userBearBoss,
       userMaya.id to userMaya,
       userAlex.id to userAlex,
       userCentralBank.id to userCentralBank
     )
 
-    // Register passwords for community accounts
-    _userCredentials[defaultUser.id] = "bearpassword123"
+    // Register passwords for seed accounts
+    _userCredentials[userBearBoss.id] = "bearpassword123"
     _userCredentials[userMaya.id] = "bearpassword123"
     _userCredentials[userAlex.id] = "bearpassword123"
     _userCredentials[userCentralBank.id] = "bearpassword123"
 
-    // Initial wallets for community members with 0 B balance (user requests 0 balance)
+    // Initial wallets for seed community members: Strictly 0 B balance and 0 IDR
     _wallets.value = mapOf(
-      defaultUser.id to WalletAccount(userId = defaultUser.id, balance = 0L),
-      userMaya.id to WalletAccount(userId = userMaya.id, balance = 0L),
-      userAlex.id to WalletAccount(userId = userAlex.id, balance = 0L),
-      userCentralBank.id to WalletAccount(userId = userCentralBank.id, balance = 0L)
+      userBearBoss.id to WalletAccount(userId = userBearBoss.id, balance = 0L, virtualIdrBalance = 0L),
+      userMaya.id to WalletAccount(userId = userMaya.id, balance = 0L, virtualIdrBalance = 0L),
+      userAlex.id to WalletAccount(userId = userAlex.id, balance = 0L, virtualIdrBalance = 0L),
+      userCentralBank.id to WalletAccount(userId = userCentralBank.id, balance = 0L, virtualIdrBalance = 0L)
     )
 
-    // User is NOT logged in on app startup: must explicitly Sign In or Sign Up
+    // User is NOT logged in on first startup: must Sign In or Sign Up
     _currentUser.value = null
   }
 
@@ -293,10 +347,11 @@ class BearEconomyRepository(
       _userCredentials[newUser.id] = pass
       _profiles.value = _profiles.value + (newUser.id to newUser)
 
-      // Initial wallet strictly with 0 B balance
+      // Initial wallet strictly with 0 B and 0 IDR balance
       val userWallet = WalletAccount(
         userId = newUser.id,
-        balance = 0L
+        balance = 0L,
+        virtualIdrBalance = 0L
       )
       _wallets.value = _wallets.value + (newUser.id to userWallet)
 
@@ -305,7 +360,7 @@ class BearEconomyRepository(
       addNotification(
         userId = newUser.id,
         title = "Akun Berhasil Dibuat",
-        message = "Selamat datang @${newUser.username}! Saldo awal Anda adalah 0 B. Gunakan faucet atau terima transfer untuk memulai.",
+        message = "Selamat datang @${newUser.username}! Saldo awal Anda adalah 0 B dan Rp 0. Silakan lakukan Top-Up Saldo IDR atau ajukan pinjaman bank untuk memulai.",
         type = "SYSTEM"
       )
 
@@ -314,9 +369,10 @@ class BearEconomyRepository(
         action = "USER_REGISTERED",
         target = newUser.username,
         before = "None",
-        after = "Registered with 0 B balance"
+        after = "Registered with 0 B balance & 0 IDR"
       )
 
+      persistState()
       Result.success(newUser)
     } catch (e: Exception) {
       Result.failure(e)
@@ -357,14 +413,15 @@ class BearEconomyRepository(
           )
           _profiles.value = _profiles.value + (profile.id to profile)
           if (!_wallets.value.containsKey(profile.id)) {
-            _wallets.value = _wallets.value + (profile.id to WalletAccount(userId = profile.id, balance = 0L))
+            _wallets.value = _wallets.value + (profile.id to WalletAccount(userId = profile.id, balance = 0L, virtualIdrBalance = 0L))
           }
         }
         _currentUser.value = profile
+        persistState()
         return@withLock Result.success(profile)
       }
 
-      // 2. Strict verification against registered local credentials
+      // 2. Strict verification against registered credentials
       val localProfile = _profiles.value.values.find {
         it.email.equals(target, ignoreCase = true) || it.username.equals(target, ignoreCase = true)
       }
@@ -373,6 +430,7 @@ class BearEconomyRepository(
         val storedPass = _userCredentials[localProfile.id]
         if (storedPass != null && storedPass == pass) {
           _currentUser.value = localProfile
+          persistState()
           return@withLock Result.success(localProfile)
         } else {
           return@withLock Result.failure(IllegalArgumentException("Password yang Anda masukkan salah"))
@@ -402,20 +460,21 @@ class BearEconomyRepository(
 
   fun signOut() {
     networkClient.signOut()
-    // Retain registered profiles, switch current user to null
     _currentUser.value = null
+    persistState()
   }
 
   fun switchUser(userId: String) {
     _profiles.value[userId]?.let {
       _currentUser.value = it
+      persistState()
     }
   }
 
   // --- Wallet & Transfer Operations ---
 
   fun getWallet(userId: String): WalletAccount {
-    return _wallets.value[userId] ?: WalletAccount(userId = userId, balance = 0L)
+    return _wallets.value[userId] ?: WalletAccount(userId = userId, balance = 0L, virtualIdrBalance = 0L)
   }
 
   suspend fun executeTransfer(
@@ -439,31 +498,22 @@ class BearEconomyRepository(
     val cleanHandle = recipientHandle.trim().trimStart('@').lowercase()
     val recipient = _profiles.value.values.find {
       it.username.equals(cleanHandle, ignoreCase = true) || it.email.equals(cleanHandle, ignoreCase = true)
-    } ?: return Result.failure(IllegalArgumentException("Recipient '@$cleanHandle' not found in Bear community"))
+    } ?: return Result.failure(IllegalArgumentException("Penerima '@$cleanHandle' tidak ditemukan dalam komunitas Bear"))
 
     if (recipient.id == sender.id) {
-      return Result.failure(IllegalArgumentException("Cannot transfer Bear to your own account"))
+      return Result.failure(IllegalArgumentException("Tidak dapat mentransfer Bear ke akun Anda sendiri"))
     }
 
     val senderWallet = getWallet(sender.id)
     if (senderWallet.balance < amount) {
       return Result.failure(
-        IllegalStateException("Insufficient balance. You have ${senderWallet.balance} B, but tried to transfer $amount B")
+        IllegalStateException("Saldo BEAR tidak cukup. Saldo saat ini: ${senderWallet.balance} B, jumlah transfer: $amount B")
       )
     }
 
-    // 1. Try remote Supabase RPC
-    val rpcParams = JSONObject().apply {
-      put("p_recipient_handle", cleanHandle)
-      put("p_amount", amount)
-      put("p_idempotency_key", idempotencyKey)
-      put("p_note", note)
-    }
-    networkClient.callRpc("execute_transfer", rpcParams)
-
-    // 2. Authoritative local debit/credit (Double-entry balance guarantee)
     val recipientWallet = getWallet(recipient.id)
 
+    // Atomic debit & credit
     val updatedSenderWallet = senderWallet.copy(
       balance = senderWallet.balance - amount,
       updatedAt = System.currentTimeMillis()
@@ -473,9 +523,7 @@ class BearEconomyRepository(
       updatedAt = System.currentTimeMillis()
     )
 
-    _wallets.value = _wallets.value +
-      (sender.id to updatedSenderWallet) +
-      (recipient.id to updatedRecipientWallet)
+    _wallets.value = _wallets.value + (sender.id to updatedSenderWallet) + (recipient.id to updatedRecipientWallet)
 
     val tx = LedgerTransaction(
       idempotencyKey = idempotencyKey,
@@ -487,12 +535,13 @@ class BearEconomyRepository(
       note = note.ifEmpty { "Transfer to @${recipient.username}" },
       status = "COMPLETED"
     )
+
     _transactions.value = listOf(tx) + _transactions.value
 
     addNotification(
       userId = recipient.id,
-      title = "Incoming Bear Transfer",
-      message = "You received $amount B from @${sender.username}.",
+      title = "BEAR Received",
+      message = "Received $amount B from @${sender.username}${if (note.isNotEmpty()) ": \"$note\"" else ""}",
       type = "TRANSFER"
     )
 
@@ -503,6 +552,52 @@ class BearEconomyRepository(
       type = "TRANSFER"
     )
 
+    persistState()
+    Result.success(tx)
+  }
+
+  // --- Real IDR Top-Up Simulator (via Bank Virtual Account / QRIS) ---
+
+  suspend fun executeTopUpIdr(
+    amountIdr: Long,
+    paymentMethod: String,
+    idempotencyKey: String
+  ): Result<LedgerTransaction> = mutex.withLock {
+    val user = _currentUser.value ?: return Result.failure(IllegalStateException("Not authenticated"))
+
+    if (amountIdr <= 0) {
+      return Result.failure(IllegalArgumentException("Nominal top-up IDR harus lebih dari 0"))
+    }
+
+    val existing = _transactions.value.find { it.idempotencyKey == idempotencyKey }
+    if (existing != null) return Result.success(existing)
+
+    val userWallet = getWallet(user.id)
+    val updatedWallet = userWallet.copy(
+      virtualIdrBalance = userWallet.virtualIdrBalance + amountIdr,
+      updatedAt = System.currentTimeMillis()
+    )
+    _wallets.value = _wallets.value + (user.id to updatedWallet)
+
+    val tx = LedgerTransaction(
+      idempotencyKey = idempotencyKey,
+      transactionType = TransactionType.TOPUP_IDR.name,
+      amount = amountIdr,
+      sourceAccount = paymentMethod,
+      destinationAccount = user.id,
+      note = "Top-Up Saldo IDR via $paymentMethod",
+      status = "COMPLETED"
+    )
+    _transactions.value = listOf(tx) + _transactions.value
+
+    addNotification(
+      userId = user.id,
+      title = "Top-Up IDR Berhasil",
+      message = "Saldo Rupiah bertambah Rp $amountIdr via $paymentMethod. Gunakan untuk membeli BEAR di pasar bursa.",
+      type = "TOPUP"
+    )
+
+    persistState()
     Result.success(tx)
   }
 
@@ -513,11 +608,9 @@ class BearEconomyRepository(
       return Result.failure(IllegalArgumentException("Top-up limit: between 1 and 500 B per request"))
     }
 
-    // Idempotency
     val existing = _transactions.value.find { it.idempotencyKey == idempotencyKey }
     if (existing != null) return Result.success(existing)
 
-    // Check system distribution pool
     val distPool = _systemAccounts.value[SupabaseConfig.ACC_USER_DISTRIBUTION]
       ?: return Result.failure(IllegalStateException("Distribution pool account not found"))
 
@@ -525,10 +618,9 @@ class BearEconomyRepository(
       return Result.failure(IllegalStateException("Distribution inventory exhausted! Available: ${distPool.balance} B"))
     }
 
-    // Deduct from finite pool, credit to user
     val updatedPool = distPool.copy(balance = distPool.balance - amount)
     val userWallet = getWallet(user.id)
-    val updatedWallet = userWallet.copy(balance = userWallet.balance + amount)
+    val updatedWallet = userWallet.copy(balance = userWallet.balance + amount, updatedAt = System.currentTimeMillis())
 
     _systemAccounts.value = _systemAccounts.value + (SupabaseConfig.ACC_USER_DISTRIBUTION to updatedPool)
     _wallets.value = _wallets.value + (user.id to updatedWallet)
@@ -539,22 +631,23 @@ class BearEconomyRepository(
       amount = amount,
       sourceAccount = SupabaseConfig.ACC_USER_DISTRIBUTION,
       destinationAccount = user.id,
-      note = "Simulated community distribution faucet top-up",
+      note = "Community distribution grant top-up",
       status = "COMPLETED"
     )
     _transactions.value = listOf(tx) + _transactions.value
 
     addNotification(
       userId = user.id,
-      title = "Top-up Successful",
-      message = "Added $amount B from the community distribution inventory.",
+      title = "Top-up Berhasil",
+      message = "Menambahkan $amount B dari pool distribusi komunitas.",
       type = "TOPUP"
     )
 
+    persistState()
     Result.success(tx)
   }
 
-  // --- Dynamic Exchange Operations ---
+  // --- Dynamic Exchange Operations (Requiring & Deducting IDR) ---
 
   suspend fun executeExchangeTrade(
     orderType: String, // "BUY" or "SELL"
@@ -564,32 +657,51 @@ class BearEconomyRepository(
     val user = _currentUser.value ?: return Result.failure(IllegalStateException("Not authenticated"))
 
     if (_centralBankSettings.value.isMarketPaused) {
-      return Result.failure(IllegalStateException("The Bear Exchange is currently paused by the Central Bank"))
+      return Result.failure(IllegalStateException("Pasar bursa Bear saat ini ditangguhkan oleh Bank Sentral"))
     }
 
     if (bearAmount <= 0) {
-      return Result.failure(IllegalArgumentException("Trade amount must be greater than 0"))
+      return Result.failure(IllegalArgumentException("Jumlah transaksi harus lebih dari 0 BEAR"))
     }
 
     val currentRate = _centralBankSettings.value.currentRateIdr
     val idrAmount = Math.round(bearAmount * currentRate)
     val exchangeInventory = _systemAccounts.value[SupabaseConfig.ACC_EXCHANGE_INVENTORY]
-      ?: return Result.failure(IllegalStateException("Exchange inventory account missing"))
+      ?: return Result.failure(IllegalStateException("Akun likuiditas pasar bursa tidak ditemukan"))
 
     val userWallet = getWallet(user.id)
 
     if (orderType == "BUY") {
-      // Must have enough BEAR inventory in system account
-      if (exchangeInventory.balance < bearAmount) {
-        return Result.failure(IllegalStateException("Exchange inventory insufficient. Available to buy: ${exchangeInventory.balance} B"))
+      // Must have enough IDR cash balance to purchase
+      if (userWallet.virtualIdrBalance < idrAmount) {
+        return Result.failure(
+          IllegalStateException(
+            "Saldo IDR Anda tidak mencukupi (Dibutuhkan Rp $idrAmount, saldo IDR Anda Rp ${userWallet.virtualIdrBalance}). Silakan lakukan Top-Up Saldo IDR terlebih dahulu."
+          )
+        )
       }
 
-      // Move BEAR from exchange inventory to user wallet
+      // Must have enough BEAR inventory in system account
+      if (exchangeInventory.balance < bearAmount) {
+        return Result.failure(
+          IllegalStateException("Stok likuiditas bursa tidak mencukupi. Tersedia: ${exchangeInventory.balance} B")
+        )
+      }
+
+      // Deduct IDR, Credit BEAR to user; Deduct BEAR from exchange inventory
       val updatedInventory = exchangeInventory.copy(balance = exchangeInventory.balance - bearAmount)
-      val updatedWallet = userWallet.copy(balance = userWallet.balance + bearAmount)
+      val updatedWallet = userWallet.copy(
+        balance = userWallet.balance + bearAmount,
+        virtualIdrBalance = userWallet.virtualIdrBalance - idrAmount,
+        updatedAt = System.currentTimeMillis()
+      )
 
       _systemAccounts.value = _systemAccounts.value + (SupabaseConfig.ACC_EXCHANGE_INVENTORY to updatedInventory)
       _wallets.value = _wallets.value + (user.id to updatedWallet)
+
+      // Slight positive price impact from buying volume
+      val newRate = (currentRate * 1.002).coerceAtMost(_centralBankSettings.value.maxRateClamp)
+      _centralBankSettings.value = _centralBankSettings.value.copy(currentRateIdr = Math.round(newRate * 100.0) / 100.0)
 
       val tx = LedgerTransaction(
         idempotencyKey = idempotencyKey,
@@ -597,7 +709,7 @@ class BearEconomyRepository(
         amount = bearAmount,
         sourceAccount = SupabaseConfig.ACC_EXCHANGE_INVENTORY,
         destinationAccount = user.id,
-        note = "Bought at simulated ref rate $currentRate IDR/BEAR (Simulated Rp $idrAmount)",
+        note = "Beli $bearAmount B seharga Rp $idrAmount (Kurs Rp $currentRate/BEAR)",
         status = "COMPLETED"
       )
       _transactions.value = listOf(tx) + _transactions.value
@@ -605,15 +717,25 @@ class BearEconomyRepository(
     } else if (orderType == "SELL") {
       // User must have enough BEAR in wallet
       if (userWallet.balance < bearAmount) {
-        return Result.failure(IllegalStateException("Insufficient balance to sell. Available: ${userWallet.balance} B"))
+        return Result.failure(
+          IllegalStateException("Saldo BEAR tidak mencukupi untuk menjual. Tersedia: ${userWallet.balance} B")
+        )
       }
 
-      // Move BEAR from user wallet back to exchange inventory
-      val updatedWallet = userWallet.copy(balance = userWallet.balance - bearAmount)
+      // Move BEAR from user wallet back to exchange inventory, credit IDR cash to user
+      val updatedWallet = userWallet.copy(
+        balance = userWallet.balance - bearAmount,
+        virtualIdrBalance = userWallet.virtualIdrBalance + idrAmount,
+        updatedAt = System.currentTimeMillis()
+      )
       val updatedInventory = exchangeInventory.copy(balance = exchangeInventory.balance + bearAmount)
 
       _wallets.value = _wallets.value + (user.id to updatedWallet)
       _systemAccounts.value = _systemAccounts.value + (SupabaseConfig.ACC_EXCHANGE_INVENTORY to updatedInventory)
+
+      // Slight negative price impact from selling volume
+      val newRate = (currentRate * 0.998).coerceAtLeast(_centralBankSettings.value.minRateClamp)
+      _centralBankSettings.value = _centralBankSettings.value.copy(currentRateIdr = Math.round(newRate * 100.0) / 100.0)
 
       val tx = LedgerTransaction(
         idempotencyKey = idempotencyKey,
@@ -621,12 +743,12 @@ class BearEconomyRepository(
         amount = bearAmount,
         sourceAccount = user.id,
         destinationAccount = SupabaseConfig.ACC_EXCHANGE_INVENTORY,
-        note = "Sold at simulated ref rate $currentRate IDR/BEAR (Simulated Rp $idrAmount)",
+        note = "Jual $bearAmount B mendapatkan Rp $idrAmount (Kurs Rp $currentRate/BEAR)",
         status = "COMPLETED"
       )
       _transactions.value = listOf(tx) + _transactions.value
     } else {
-      return Result.failure(IllegalArgumentException("Invalid order type: $orderType"))
+      return Result.failure(IllegalArgumentException("Tipe order tidak valid: $orderType"))
     }
 
     val order = ExchangeOrder(
@@ -639,133 +761,117 @@ class BearEconomyRepository(
 
     addNotification(
       userId = user.id,
-      title = "Exchange Order Executed",
-      message = "$orderType $bearAmount B @ $currentRate IDR (Simulated value: Rp $idrAmount)",
+      title = "Order Bursa Berhasil",
+      message = "$orderType $bearAmount B @ Rp $currentRate (Nilai: Rp $idrAmount)",
       type = "EXCHANGE"
     )
 
+    persistState()
     Result.success(order)
   }
 
   suspend fun triggerMarketRateUpdate(customEvent: String? = null): ExchangeRateRecord = mutex.withLock {
     val current = _centralBankSettings.value.currentRateIdr
-    // Bounded pseudo-random market shock between -2.8% and +2.8%
-    val shockPercent = (Math.random() * 5.6 - 2.8)
-    val roundedShock = Math.round(shockPercent * 100.0) / 100.0
-    val newRate = Math.round((current * (1.0 + roundedShock / 100.0)) * 100.0) / 100.0
+    val randFactor = (Math.random() - 0.48) * 0.05
+    var newRate = current * (1.0 + randFactor)
+    newRate = newRate.coerceIn(_centralBankSettings.value.minRateClamp, _centralBankSettings.value.maxRateClamp)
+    val rounded = Math.round(newRate * 100.0) / 100.0
+    val chgPct = Math.round(((rounded - current) / current) * 10000.0) / 100.0
 
     val eventName = customEvent ?: when {
-      roundedShock > 1.5 -> "High Buy Demand Surge"
-      roundedShock > 0.0 -> "Steady Liquidity Inflow"
-      roundedShock > -1.5 -> "Gradual Market Balancing"
-      else -> "Community Profit Taking"
+      chgPct > 1.0 -> "Lonjakan Permintaan Likuiditas"
+      chgPct < -1.0 -> "Koreksi Pasokan Pasar"
+      else -> "Stabilisasi Pasar Bank Sentral"
     }
 
     val record = ExchangeRateRecord(
-      rateIdr = newRate.coerceAtLeast(1.0),
+      rateIdr = rounded,
       previousRate = current,
-      changePercent = roundedShock,
-      marketEvent = eventName,
-      createdAt = System.currentTimeMillis()
+      changePercent = chgPct,
+      marketEvent = eventName
     )
 
     _exchangeRates.value = _exchangeRates.value + record
     _centralBankSettings.value = _centralBankSettings.value.copy(
-      currentRateIdr = record.rateIdr,
+      currentRateIdr = rounded,
       updatedAt = System.currentTimeMillis()
     )
 
-    addAuditLog(
-      actor = _currentUser.value?.email ?: "SYSTEM",
-      action = "EXCHANGE_RATE_UPDATE",
-      target = "CENTRAL_BANK_EXCHANGE",
-      before = "$current IDR",
-      after = "${record.rateIdr} IDR (${if (roundedShock >= 0) "+" else ""}$roundedShock%)"
-    )
-
+    persistState()
     record
   }
 
-  // --- Banking & 4-Stage Loan Processing ---
+  // --- Banking & Loan Facility (Persistent Bank Reserves) ---
 
-  suspend fun submitLoanApplication(productId: String, requestedAmount: Long): Result<LoanApplication> = mutex.withLock {
+  suspend fun submitLoanApplication(
+    productId: String,
+    requestedAmount: Long
+  ): Result<LoanApplication> = mutex.withLock {
     val user = _currentUser.value ?: return Result.failure(IllegalStateException("Not authenticated"))
     val product = _loanProducts.value.find { it.id == productId }
       ?: return Result.failure(IllegalArgumentException("Loan product not found"))
 
     if (requestedAmount < product.minAmount || requestedAmount > product.maxAmount) {
-      return Result.failure(IllegalArgumentException("Amount must be between ${product.minAmount} and ${product.maxAmount} B"))
+      return Result.failure(
+        IllegalArgumentException("Requested amount must be between ${product.minAmount} and ${product.maxAmount} B")
+      )
     }
 
-    // Check for existing active or overdue loans
-    val hasActive = _activeLoans.value.any { it.userId == user.id && (it.status == "ACTIVE" || it.status == "OVERDUE") }
+    // Check if user already has an active or in-progress loan
+    val hasActive = _activeLoans.value.any { it.userId == user.id && it.status == "ACTIVE" }
     if (hasActive) {
-      return Result.failure(IllegalStateException("You already have an active loan. Settle it before requesting a new one."))
+      return Result.failure(IllegalStateException("Anda masih memiliki fasilitas pinjaman yang sedang aktif. Lunasi terlebih dahulu."))
     }
-
-    val lendingPool = _systemAccounts.value[SupabaseConfig.ACC_BANK_LENDING_POOL]?.balance ?: 0L
 
     val app = LoanApplication(
       userId = user.id,
       productId = product.id,
       productName = product.name,
       requestedAmount = requestedAmount,
+      interestRatePercent = product.interestRatePercent,
+      tenorDays = product.tenorDays,
       currentStage = 1,
       stageStatus = "IN_PROGRESS",
-      eligibilityStatus = "Screening in progress...",
+      eligibilityStatus = "Memverifikasi data komunitas & kepatuhan limit...",
       creditScore = user.creditScore,
-      creditRating = when {
-        user.creditScore >= 750 -> "Excellent"
-        user.creditScore >= 650 -> "Good"
-        else -> "Fair"
-      },
-      liquidityStatus = "Evaluating bank reserves",
-      availableBankLiquidity = lendingPool,
-      tenorDays = product.tenorDays,
-      interestRatePercent = product.interestRatePercent
+      liquidityStatus = "Menunggu verifikasi likuiditas cadangan bank...",
+      availableBankLiquidity = _systemAccounts.value[SupabaseConfig.ACC_BANK_LENDING_POOL]?.balance ?: 0L
     )
 
     _loanApplications.value = listOf(app) + _loanApplications.value
+    persistState()
     Result.success(app)
   }
 
-  suspend fun advanceLoanStage(applicationId: String): Result<LoanApplication> = mutex.withLock {
+  suspend fun processLoanStage(applicationId: String): Result<LoanApplication> = mutex.withLock {
     val currentApp = _loanApplications.value.find { it.id == applicationId }
       ?: return Result.failure(IllegalArgumentException("Application not found"))
 
-    if (currentApp.stageStatus != "IN_PROGRESS") {
-      return Result.success(currentApp)
-    }
-
     val lendingPool = _systemAccounts.value[SupabaseConfig.ACC_BANK_LENDING_POOL]?.balance ?: 0L
 
-    val updatedApp: LoanApplication = when (currentApp.currentStage) {
+    val updatedApp = when (currentApp.currentStage) {
       1 -> {
-        // Complete Stage 1 (Eligibility) -> Move to Stage 2 (Credit Score Analysis)
         currentApp.copy(
           currentStage = 2,
-          eligibilityStatus = "Verified: Zero overdue debt, active account age approved",
+          eligibilityStatus = "Kriteria kelayakan akun komunitas terpenuhi",
           updatedAt = System.currentTimeMillis()
         )
       }
       2 -> {
-        // Complete Stage 2 (Credit Score) -> Move to Stage 3 (Liquidity Assessment)
         currentApp.copy(
           currentStage = 3,
-          liquidityStatus = "Checking bank lending pool balance...",
+          liquidityStatus = "Memeriksa saldo pool pinjaman bank...",
           availableBankLiquidity = lendingPool,
           updatedAt = System.currentTimeMillis()
         )
       }
       3 -> {
-        // Complete Stage 3 (Liquidity Check) -> Move to Stage 4 (Decision and Offer)
         if (lendingPool < currentApp.requestedAmount) {
-          // Reject due to bank liquidity constraint (credit score cannot override this!)
           currentApp.copy(
             currentStage = 4,
             stageStatus = "REJECTED",
-            liquidityStatus = "Bank lending pool liquidity constrained",
-            decisionReason = "The bank lending pool currently holds $lendingPool B, which is insufficient for your requested ${currentApp.requestedAmount} B. Please apply for a smaller amount.",
+            liquidityStatus = "Likuiditas cadangan pinjaman bank terbatas",
+            decisionReason = "Pool pinjaman bank saat ini memiliki $lendingPool B, tidak cukup untuk ${currentApp.requestedAmount} B yang diajukan.",
             updatedAt = System.currentTimeMillis()
           )
         } else {
@@ -776,12 +882,12 @@ class BearEconomyRepository(
           currentApp.copy(
             currentStage = 4,
             stageStatus = "APPROVED",
-            liquidityStatus = "Sufficient lending reserves verified ($lendingPool B available)",
+            liquidityStatus = "Cadangan likuiditas bank terverifikasi ($lendingPool B tersedia)",
             approvedPrincipal = currentApp.requestedAmount,
             interestAmount = interest,
             totalRepayment = total,
             dueAt = dueAt,
-            decisionReason = "Credit score criteria and bank reserve checks successfully met. Your loan offer is ready for acceptance.",
+            decisionReason = "Skor kredit dan cadangan bank memenuhi syarat. Penawaran pinjaman siap dicairkan.",
             updatedAt = System.currentTimeMillis()
           )
         }
@@ -796,21 +902,24 @@ class BearEconomyRepository(
     if (updatedApp.stageStatus == "APPROVED") {
       addNotification(
         userId = updatedApp.userId,
-        title = "Loan Offer Approved!",
-        message = "Your application for ${updatedApp.approvedPrincipal} B (${updatedApp.productName}) has been approved. Review and accept to disburse.",
+        title = "Pinjaman Disetujui!",
+        message = "Pengajuan pinjaman ${updatedApp.approvedPrincipal} B (${updatedApp.productName}) telah disetujui. Silakan terima penawaran untuk pencairan.",
         type = "LOAN"
       )
     } else if (updatedApp.stageStatus == "REJECTED") {
       addNotification(
         userId = updatedApp.userId,
-        title = "Loan Application Update",
-        message = "Your loan application could not be approved: ${updatedApp.decisionReason}",
+        title = "Pembaruan Pinjaman",
+        message = "Pengajuan pinjaman tidak dapat disetujui: ${updatedApp.decisionReason}",
         type = "LOAN"
       )
     }
 
+    persistState()
     Result.success(updatedApp)
   }
+
+  suspend fun advanceLoanStage(applicationId: String): Result<LoanApplication> = processLoanStage(applicationId)
 
   suspend fun disburseLoan(applicationId: String): Result<ActiveLoan> = mutex.withLock {
     val user = _currentUser.value ?: return Result.failure(IllegalStateException("Not authenticated"))
@@ -818,25 +927,27 @@ class BearEconomyRepository(
       ?: return Result.failure(IllegalArgumentException("Application not found"))
 
     if (app.stageStatus != "APPROVED") {
-      return Result.failure(IllegalStateException("Application is not in APPROVED state (current: ${app.stageStatus})"))
+      return Result.failure(IllegalStateException("Pengajuan belum dalam status APPROVED"))
     }
 
     val lendingPool = _systemAccounts.value[SupabaseConfig.ACC_BANK_LENDING_POOL]
-      ?: return Result.failure(IllegalStateException("Lending pool account missing"))
+      ?: return Result.failure(IllegalStateException("Akun lending pool bank tidak ditemukan"))
 
     if (lendingPool.balance < app.approvedPrincipal) {
-      return Result.failure(IllegalStateException("Bank lending reserves are now depleted. Cannot disburse."))
+      return Result.failure(IllegalStateException("Cadangan likuiditas bank tidak mencukupi untuk dicairkan."))
     }
 
-    // Atomic debit bank lending pool, credit user wallet
+    // Atomic debit bank lending pool (PERMANENTLY HELD), credit user wallet
     val updatedPool = lendingPool.copy(balance = lendingPool.balance - app.approvedPrincipal)
     val userWallet = getWallet(user.id)
-    val updatedWallet = userWallet.copy(balance = userWallet.balance + app.approvedPrincipal)
+    val updatedWallet = userWallet.copy(
+      balance = userWallet.balance + app.approvedPrincipal,
+      updatedAt = System.currentTimeMillis()
+    )
 
     _systemAccounts.value = _systemAccounts.value + (SupabaseConfig.ACC_BANK_LENDING_POOL to updatedPool)
     _wallets.value = _wallets.value + (user.id to updatedWallet)
 
-    // Mark application ACCEPTED
     val updatedApp = app.copy(stageStatus = "ACCEPTED", updatedAt = System.currentTimeMillis())
     _loanApplications.value = _loanApplications.value.map { if (it.id == applicationId) updatedApp else it }
 
@@ -861,101 +972,94 @@ class BearEconomyRepository(
       amount = app.approvedPrincipal,
       sourceAccount = SupabaseConfig.ACC_BANK_LENDING_POOL,
       destinationAccount = user.id,
-      note = "Disbursed ${app.productName} loan facility",
+      note = "Pencairan fasilitas pinjaman ${app.productName}",
       status = "COMPLETED"
     )
     _transactions.value = listOf(tx) + _transactions.value
 
     addNotification(
       userId = user.id,
-      title = "Funds Disbursed",
-      message = "${app.approvedPrincipal} B has been credited to your wallet from the bank lending pool.",
+      title = "Dana Pinjaman Dicairkan",
+      message = "${app.approvedPrincipal} B telah dikreditkan ke wallet Anda dari pool likuiditas bank.",
       type = "LOAN"
     )
 
+    persistState()
     Result.success(activeLoan)
   }
 
   suspend fun repayLoan(loanId: String, amount: Long): Result<ActiveLoan> = mutex.withLock {
     val user = _currentUser.value ?: return Result.failure(IllegalStateException("Not authenticated"))
     val loan = _activeLoans.value.find { it.id == loanId && it.userId == user.id }
-      ?: return Result.failure(IllegalArgumentException("Active loan not found"))
+      ?: return Result.failure(IllegalArgumentException("Pinjaman tidak ditemukan"))
 
-    if (loan.status == "PAID" || loan.remainingAmount == 0L) {
-      return Result.failure(IllegalStateException("This loan is already settled"))
+    if (loan.status != "ACTIVE") {
+      return Result.failure(IllegalStateException("Pinjaman tidak sedang berstatus aktif"))
     }
 
-    if (amount <= 0 || amount > loan.remainingAmount) {
-      return Result.failure(IllegalArgumentException("Repayment must be between 1 and ${loan.remainingAmount} B"))
+    if (amount <= 0) {
+      return Result.failure(IllegalArgumentException("Nominal pelunasan harus lebih dari 0"))
     }
 
     val userWallet = getWallet(user.id)
     if (userWallet.balance < amount) {
-      return Result.failure(IllegalStateException("Insufficient balance. Required: $amount B, Available: ${userWallet.balance} B"))
+      return Result.failure(IllegalStateException("Saldo BEAR Anda tidak cukup untuk membayar pinjaman (${userWallet.balance} B)"))
     }
 
-    // Split repayment between principal and interest
-    val interestPortion = Math.round(amount * (loan.interestAmount.toDouble() / loan.totalAmount.toDouble()))
-    val principalPortion = amount - interestPortion
+    val payAmount = amount.coerceAtMost(loan.remainingAmount)
+    val principalRatio = if (loan.totalAmount > 0) loan.principalAmount.toDouble() / loan.totalAmount.toDouble() else 1.0
+    val principalPortion = Math.round(payAmount * principalRatio)
+    val interestPortion = payAmount - principalPortion
 
-    // Debit user wallet
-    val updatedWallet = userWallet.copy(balance = userWallet.balance - amount)
-    _wallets.value = _wallets.value + (user.id to updatedWallet)
+    // Deduct user wallet
+    val updatedUserWallet = userWallet.copy(
+      balance = userWallet.balance - payAmount,
+      updatedAt = System.currentTimeMillis()
+    )
 
-    // Route principal back to BANK LENDING POOL
-    val lendingPool = _systemAccounts.value[SupabaseConfig.ACC_BANK_LENDING_POOL]!!
-    val updatedPool = lendingPool.copy(balance = lendingPool.balance + principalPortion)
+    // Credit bank lending pool (principal) & interest account (interest)
+    val lendingPool = _systemAccounts.value[SupabaseConfig.ACC_BANK_LENDING_POOL]
+    val interestAcc = _systemAccounts.value[SupabaseConfig.ACC_BANK_INTEREST_INCOME]
 
-    // Route interest to BANK INTEREST INCOME
-    val interestIncome = _systemAccounts.value[SupabaseConfig.ACC_BANK_INTEREST_INCOME]!!
-    val updatedInterestIncome = interestIncome.copy(balance = interestIncome.balance + interestPortion)
+    val updatedLendingPool = lendingPool?.copy(balance = lendingPool.balance + principalPortion)
+    val updatedInterestAcc = interestAcc?.copy(balance = interestAcc.balance + interestPortion)
 
-    _systemAccounts.value = _systemAccounts.value +
-      (SupabaseConfig.ACC_BANK_LENDING_POOL to updatedPool) +
-      (SupabaseConfig.ACC_BANK_INTEREST_INCOME to updatedInterestIncome)
+    _wallets.value = _wallets.value + (user.id to updatedUserWallet)
+    if (updatedLendingPool != null) {
+      _systemAccounts.value = _systemAccounts.value + (SupabaseConfig.ACC_BANK_LENDING_POOL to updatedLendingPool)
+    }
+    if (updatedInterestAcc != null) {
+      _systemAccounts.value = _systemAccounts.value + (SupabaseConfig.ACC_BANK_INTEREST_INCOME to updatedInterestAcc)
+    }
 
-    val newRemaining = loan.remainingAmount - amount
+    val newRemaining = loan.remainingAmount - payAmount
+    val isFullyPaid = newRemaining <= 0
     val updatedLoan = loan.copy(
       remainingAmount = newRemaining,
-      status = if (newRemaining == 0L) "PAID" else "ACTIVE"
+      status = if (isFullyPaid) "PAID" else "ACTIVE"
     )
 
     _activeLoans.value = _activeLoans.value.map { if (it.id == loanId) updatedLoan else it }
 
     val tx = LedgerTransaction(
-      idempotencyKey = "repay_${UUID.randomUUID()}",
+      idempotencyKey = "repay_${loan.id}_${System.currentTimeMillis()}",
       transactionType = TransactionType.LOAN_REPAYMENT.name,
-      amount = amount,
+      amount = payAmount,
       sourceAccount = user.id,
       destinationAccount = SupabaseConfig.ACC_BANK_LENDING_POOL,
-      note = "Loan Repayment: Principal $principalPortion B, Interest $interestPortion B",
+      note = "Pelunasan pinjaman ${loan.productName}${if (isFullyPaid) " (Lunas)" else ""}",
       status = "COMPLETED"
     )
     _transactions.value = listOf(tx) + _transactions.value
 
-    // If fully settled, boost credit score!
-    if (newRemaining == 0L) {
-      val currentScore = user.creditScore
-      val newScore = (currentScore + 25).coerceAtMost(850)
-      val updatedProfile = user.copy(creditScore = newScore)
-      _currentUser.value = updatedProfile
-      _profiles.value = _profiles.value + (user.id to updatedProfile)
+    addNotification(
+      userId = user.id,
+      title = if (isFullyPaid) "Pinjaman Lunas!" else "Pembayaran Pinjaman Diterima",
+      message = "Membayar $payAmount B. Sisa pinjaman: $newRemaining B.",
+      type = "LOAN"
+    )
 
-      addNotification(
-        userId = user.id,
-        title = "Loan Fully Settled!",
-        message = "Congratulations! Your loan has been fully settled. Your credit score increased to $newScore.",
-        type = "LOAN"
-      )
-    } else {
-      addNotification(
-        userId = user.id,
-        title = "Partial Repayment Recorded",
-        message = "Paid $amount B. Remaining balance: $newRemaining B.",
-        type = "LOAN"
-      )
-    }
-
+    persistState()
     Result.success(updatedLoan)
   }
 
@@ -983,6 +1087,7 @@ class BearEconomyRepository(
       after = after
     )
 
+    persistState()
     Result.success(updated)
   }
 

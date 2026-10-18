@@ -136,6 +136,7 @@ fun HomeDashboardScreen(
       item {
         BearBalanceCard(
           balance = userWallet?.balance ?: 0L,
+          virtualIdrBalance = userWallet?.virtualIdrBalance ?: 0L,
           currentRateIdr = settings.currentRateIdr,
           changePercent = latestRate?.changePercent ?: 0.0,
           onTransferClick = onNavigateToTransfer,
@@ -235,10 +236,10 @@ fun HomeDashboardScreen(
   }
 
   if (showTopUpDialog) {
-    TopUpDialog(
+    RealIdrTopUpDialog(
       onDismiss = { showTopUpDialog = false },
-      onTopUp = { amount ->
-        viewModel.executeTopUp(amount)
+      onTopUp = { amount, method ->
+        viewModel.executeTopUpIdr(amount, method)
         showTopUpDialog = false
       }
     )
@@ -353,18 +354,26 @@ fun ExchangeMarketMiniCard(
 }
 
 @Composable
-fun TopUpDialog(
+fun RealIdrTopUpDialog(
   onDismiss: () -> Unit,
-  onTopUp: (Long) -> Unit
+  onTopUp: (Long, String) -> Unit
 ) {
-  var selectedAmount by remember { mutableStateOf(100L) }
-  val presets = listOf(50L, 100L, 250L, 500L)
+  var selectedAmount by remember { mutableStateOf(50_000L) }
+  var selectedMethod by remember { mutableStateOf("BCA Virtual Account") }
+
+  val presets = listOf(25_000L, 50_000L, 100_000L, 250_000L, 500_000L)
+  val methods = listOf(
+    "BCA Virtual Account",
+    "Mandiri Virtual Account",
+    "BRI Virtual Account",
+    "QRIS Instant"
+  )
 
   AlertDialog(
     onDismissRequest = onDismiss,
     title = {
       Text(
-        text = "Virtual Community Faucet",
+        text = "Top-Up Saldo Kas IDR",
         style = MaterialTheme.typography.titleLarge,
         fontWeight = FontWeight.Bold,
         color = ForestGreenPrimary
@@ -373,16 +382,25 @@ fun TopUpDialog(
     text = {
       Column {
         Text(
-          text = "Select a simulated Bear grant to claim from the finite community distribution pool (subject to pool availability).",
-          style = MaterialTheme.typography.bodyMedium,
+          text = "Isi saldo Rupiah (IDR) Anda untuk digunakan membeli BEAR di Pasar Bursa.",
+          style = MaterialTheme.typography.bodySmall,
           color = TextSecondary
         )
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(14.dp))
+
+        Text(
+          text = "Pilih Nominal Top-Up:",
+          style = MaterialTheme.typography.labelMedium,
+          fontWeight = FontWeight.Bold,
+          color = TextPrimary
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+
         Row(
           modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.spacedBy(8.dp)
+          horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-          presets.forEach { amt ->
+          presets.take(3).forEach { amt ->
             val isSelected = selectedAmount == amt
             Button(
               onClick = { selectedAmount = amt },
@@ -391,14 +409,96 @@ fun TopUpDialog(
                 containerColor = if (isSelected) ForestGreenPrimary else SurfaceVariantColor,
                 contentColor = if (isSelected) PureWhite else TextPrimary
               ),
-              shape = RoundedCornerShape(12.dp),
-              contentPadding = PaddingValues(vertical = 8.dp)
+              shape = RoundedCornerShape(10.dp),
+              contentPadding = PaddingValues(vertical = 6.dp)
             ) {
               Text(
-                text = "$amt B",
+                text = "Rp ${amt / 1000}rb",
                 fontWeight = FontWeight.Bold,
-                fontSize = 12.sp
+                fontSize = 11.sp
               )
+            }
+          }
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+          presets.drop(3).forEach { amt ->
+            val isSelected = selectedAmount == amt
+            Button(
+              onClick = { selectedAmount = amt },
+              modifier = Modifier.weight(1f),
+              colors = ButtonDefaults.buttonColors(
+                containerColor = if (isSelected) ForestGreenPrimary else SurfaceVariantColor,
+                contentColor = if (isSelected) PureWhite else TextPrimary
+              ),
+              shape = RoundedCornerShape(10.dp),
+              contentPadding = PaddingValues(vertical = 6.dp)
+            ) {
+              Text(
+                text = "Rp ${amt / 1000}rb",
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp
+              )
+            }
+          }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text(
+          text = "Metode Pembayaran:",
+          style = MaterialTheme.typography.labelMedium,
+          fontWeight = FontWeight.Bold,
+          color = TextPrimary
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+
+        methods.forEach { method ->
+          val isSelected = selectedMethod == method
+          Surface(
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(vertical = 3.dp)
+              .clickable { selectedMethod = method },
+            shape = RoundedCornerShape(10.dp),
+            color = if (isSelected) SageSurface else PureWhite,
+            border = if (isSelected) androidx.compose.foundation.BorderStroke(1.5.dp, MintSecondary) else androidx.compose.foundation.BorderStroke(1.dp, SurfaceVariantColor)
+          ) {
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                  imageVector = if (method.contains("QRIS")) Icons.Default.QrCode else Icons.Default.AccountBalance,
+                  contentDescription = null,
+                  tint = if (isSelected) ForestGreenPrimary else TextSecondary,
+                  modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                  text = method,
+                  style = MaterialTheme.typography.bodyMedium,
+                  fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                  color = if (isSelected) ForestGreenPrimary else TextPrimary
+                )
+              }
+              if (isSelected) {
+                Icon(
+                  imageVector = Icons.Default.CheckCircle,
+                  contentDescription = "Selected",
+                  tint = MintSecondary,
+                  modifier = Modifier.size(18.dp)
+                )
+              }
             }
           }
         }
@@ -406,15 +506,15 @@ fun TopUpDialog(
     },
     confirmButton = {
       Button(
-        onClick = { onTopUp(selectedAmount) },
+        onClick = { onTopUp(selectedAmount, selectedMethod) },
         colors = ButtonDefaults.buttonColors(containerColor = ForestGreenPrimary)
       ) {
-        Text("Claim ${selectedAmount} B")
+        Text("Konfirmasi Top-Up Rp ${java.text.NumberFormat.getNumberInstance(java.util.Locale.US).format(selectedAmount)}")
       }
     },
     dismissButton = {
       TextButton(onClick = onDismiss) {
-        Text("Cancel", color = TextSecondary)
+        Text("Batal", color = TextSecondary)
       }
     }
   )
